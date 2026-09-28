@@ -8,6 +8,7 @@ from enum import StrEnum
 from review_loop.config.settings import RepositoryConfig, Settings
 from review_loop.engine.pull_url import parse_pull_url
 from review_loop.repositories import runs as runs_repo
+from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import Clock, GitClient, GitHubGateway
 from review_loop.types.pull_request import PullRef
 from review_loop.types.result import Err, Ok, Result
@@ -19,6 +20,7 @@ class StartRefusal(StrEnum):
     AUTHOR_NOT_ALLOWED = "author_not_allowed"
     PULL_NOT_OPEN = "pull_not_open"
     FORK_NOT_SUPPORTED = "fork_not_supported"
+    AUTHOR_SESSION_NOT_FORKABLE = "author_session_not_forkable"
 
 
 def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github: GitHubGateway, git: GitClient,
@@ -27,6 +29,8 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
     repo = find_repository(settings, ref)
     if repo is None:
         return Err(StartRefusal.REPOSITORY_NOT_REGISTERED)
+    if author_session not in ("", "auto") and not AGENT_PROFILES[repo.review.author].forks_sessions:
+        return Err(StartRefusal.AUTHOR_SESSION_NOT_FORKABLE)
     active = runs_repo.find_active_run(conn, repo.name, ref.number)
     if active is not None:
         return Ok(active)

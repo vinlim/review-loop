@@ -1,4 +1,4 @@
-"""review-loop: drive a Codex reviewer and a Claude author through pull request review rounds."""
+"""review-loop: drive a reviewer agent and an author agent (Codex and Claude by default) through pull request review rounds."""
 
 from __future__ import annotations
 

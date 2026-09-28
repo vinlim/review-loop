@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 
@@ -36,9 +37,9 @@ class Harness:
         self.reviewer, self.author = FakeAgent(), FakeAgent()
         self.clock = FakeClock()
         self.deps = Deps(settings=settings, conn=self.conn, git=self.git, github=self.github, process=self.process,
-                         clock=self.clock, reviewer=self.reviewer, author=self.author, prompts_dir=ROOT / "review_loop" / "prompts",
+                         clock=self.clock, agents={"codex": self.reviewer, "claude": self.author}, prompts_dir=ROOT / "review_loop" / "prompts",
                          schemas_dir=ROOT / "review_loop" / "schemas", base_env={"PATH": "/usr/bin"}, runs_dir=tmp_path / "runs",
-                         find_author_session=lambda branch, local_path="": "desktop-session" if branch == "claude/change" else "",
+                         find_author_session=lambda agent, branch, local_path="": "desktop-session" if (agent, branch) == ("claude", "claude/change") else "",
                          inspect_only=inspect_only)
         self.run = start_run(URL, settings=settings, conn=self.conn, github=self.github, git=self.git, clock=self.clock, versions={},
                              inspect_only=inspect_only).value
@@ -201,3 +202,57 @@ def test_every_agent_request_grants_the_pass_directory_for_reading(settings, tmp
     pass_dir = str(tmp_path / "runs" / run.id / "pass-1")
     assert h.reviewer.requests[0].read_dirs == [pass_dir]
     assert h.author.requests[0].read_dirs == [pass_dir]
+
+
+def with_review(settings, **changes):
+    repo = settings.repositories["webapp"]
+    return dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, review=dataclasses.replace(repo.review, **changes))})
+
+
+def test_each_phase_goes_to_the_agent_the_repository_configures_with_that_agents_model(settings, tmp_path):
+    h = Harness(with_review(settings, reviewer="agy", reviewer_model="", reviewer_effort="", author="opencode", author_model="x/y"), tmp_path)
+    agy, opencode = FakeAgent(), FakeAgent()
+    h.deps.agents.update({"agy": agy, "opencode": opencode})
+    run = step(h.deps, h.run)
+    agy.reply(REVIEW_984)
+    run = step(h.deps, run)
+    opencode.reply(ASSESS_984)
+
+    step(h.deps, run)
+
+    assert h.reviewer.requests == [] and h.author.requests == []
+    assert (agy.requests[0].phase, agy.requests[0].model, agy.requests[0].effort) == ("review", "", "")
+    assert (opencode.requests[0].phase, opencode.requests[0].model) == ("assess", "x/y")
+    assert {item["agent"] for item in inbox_repo.list_items(h.conn, repo="webapp")} == {"opencode"}
+
+
+def test_a_read_only_phase_that_edits_the_worktree_pauses_once_and_leaves_the_edit_for_inspection(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    h.reviewer.on_run = lambda request: h.git.working_changed.append("app/Edited.php")
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+    assert run.resume_state == RunState.REVIEWING and len(h.reviewer.requests) == 1
+    assert h.git.working_changed == ["app/Edited.php"] and h.findings() == {}
+
+
+def test_a_read_only_phase_that_commits_pauses(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    h.reviewer.on_run = lambda request: h.git.heads.__setitem__(request.cwd, "9" * 40)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+
+
+def test_prepare_looks_for_a_desktop_session_of_the_configured_author_agent(settings, tmp_path):
+    h = Harness(with_review(settings, author="opencode"), tmp_path)
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.REVIEWING and run.author_session == ""

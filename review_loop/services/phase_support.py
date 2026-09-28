@@ -39,27 +39,43 @@ class Deps:
     github: Any
     process: Any
     clock: Any
-    reviewer: Any
-    author: Any
+    agents: dict[str, Any]
     prompts_dir: Path
     schemas_dir: Path
     base_env: dict[str, str]
     runs_dir: Path
-    find_author_session: Callable[[str], str]
+    find_author_session: Callable[[str, str, str], str]
     inspect_only: bool = False
     notifier: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+def reviewer_agent(deps: Deps, repo_config: RepositoryConfig) -> Any:
+    return deps.agents[repo_config.review.reviewer]
+
+
+def author_agent(deps: Deps, repo_config: RepositoryConfig) -> Any:
+    return deps.agents[repo_config.review.author]
+
+
 def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: int, state: RunState,
               validate: Callable[[dict], Result] | None = None) -> Result[PhaseOutput, PauseReason]:
     """Two attempts for retryable failures of a read-only phase; a write phase gets one, because a second run
-    on a partially edited workspace is never safe. A usage or auth failure pauses at once."""
-    attempts = 1 if request.tools_policy == "write" else 2
+    on a partially edited workspace is never safe. A usage or auth failure pauses at once.
+
+    A read-only phase that moved HEAD or changed the working tree pauses whatever the agent returned: not every
+    CLI can be held to read-only by its flags, so the coordinator checks the outcome itself."""
+    read_only = request.tools_policy != "write"
+    attempts = 2 if read_only else 1
+    before = worktree_state(deps, request.cwd) if read_only else None
     for attempt in range(1, attempts + 1):
         attempt_request = dataclasses.replace(request, output_dir=str(Path(request.output_dir) / f"attempt-{attempt}"))
         attempt_id = phases_repo.record_attempt(deps.conn, run.id, request.phase, pass_no, attempt, now(deps), input_path=attempt_request.output_dir)
         result = agent.run(attempt_request)
+        if read_only and worktree_state(deps, request.cwd) != before:
+            phases_repo.finish_attempt(deps.conn, attempt_id, "failed", now(deps),
+                                       error={"kind": PauseReason.READ_ONLY_VIOLATED, "detail": "the worktree changed during a read-only phase"})
+            return Err(PauseReason.READ_ONLY_VIOLATED)
         if result.ok and validate is not None:
             check = validate(result.value.data)
             if not check.ok:
@@ -73,6 +89,10 @@ def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: 
         if result.error.kind not in RETRYABLE:
             break
     return Err(PauseReason.AGENT_FAILED)
+
+
+def worktree_state(deps: Deps, path: str) -> tuple[str, list[str]]:
+    return deps.git.head_sha(path), sorted(deps.git.working_changed_files(path))
 
 
 def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: str, schema: str, output_dir: Path, policy: str,

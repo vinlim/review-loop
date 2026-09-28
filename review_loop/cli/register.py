@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
+from review_loop.types.agents import AGENT_PROFILES
 
 LARAVEL_SANITIZED_ENV = ["DB_*", "DB_URL", "CACHE_STORE", "SESSION_DRIVER", "QUEUE_CONNECTION", "BROADCAST_CONNECTION", "MAIL_MAILER"]
 
@@ -42,6 +43,9 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
         f"format = {_v(format_commands)}",
         "",
         f"[repositories.{name}.review]",
+        f"# Agents: {', '.join(sorted(AGENT_PROFILES))}. An unset model or effort uses the agent's default.",
+        'reviewer = "codex"',
+        'author = "claude"',
         "max_review_passes = 7",
         "max_fix_attempts = 2",
         "max_alignment_exchanges = 1",

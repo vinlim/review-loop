@@ -18,9 +18,9 @@ from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.services.completion_phase import complete_run
 from review_loop.services.phase_support import (
-    ASSESS_ACTIONS_TEXT, REVIEW_ACTIONS_TEXT, Deps, adopt_head, alignment_block, apply_events, decisions, events_by_finding,
+    ASSESS_ACTIONS_TEXT, REVIEW_ACTIONS_TEXT, Deps, adopt_head, alignment_block, apply_events, author_agent, decisions, events_by_finding,
     externally_controlled, finish, inspect_only, instruction_files, now, pass_dir, pause, publisher, pull_values, ref, repo,
-    request, run_agent, save, template, transaction, trusted_logins, verification_lines,
+    request, reviewer_agent, run_agent, save, template, transaction, trusted_logins, verification_lines,
 )
 from review_loop.services.workspace import registered_script_files
 from review_loop.repositories import runs as runs_repo
@@ -86,7 +86,7 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
         return pause(deps, run, reason)
     run.worktree_path, run.local_branch = ready.value.path, ready.value.local_branch
     if run.author_session in ("", "auto"):
-        run.author_session = deps.find_author_session(run.head_ref, str(repo_config.local_path))
+        run.author_session = deps.find_author_session(repo_config.review.author, run.head_ref, str(repo_config.local_path))
     return save(deps, run, RunState.REVIEWING)
 
 
@@ -111,7 +111,7 @@ def phase_review(deps: Deps, run: Run) -> Run:
                             directory / "review", "read-only", repo_config.review.reviewer_model, repo_config.review.reviewer_effort)
     pending_blockers = [f.id for f in findings if f.severity == Severity.BLOCKER
                         and FindingState(f.state) in OMISSION_EVENTS]
-    outcome = run_agent(deps, run, deps.reviewer, phase_request, pass_no, state=run.state,
+    outcome = run_agent(deps, run, reviewer_agent(deps, repo_config), phase_request, pass_no, state=run.state,
                         validate=lambda data: validate_review_coverage(data, pending_blockers))
     if not outcome.ok:
         return pause(deps, run, outcome.error)
@@ -381,7 +381,7 @@ def phase_assess(deps: Deps, run: Run) -> Run:
     phase_request = request(deps, repo_config, run, "assess", prompt, "assessment", directory / "assess", "read-only",
                             repo_config.review.author_model, repo_config.review.author_effort, resume=run.author_session)
     severities = {f.id: f.severity for f in findings}
-    outcome = run_agent(deps, run, deps.author, phase_request, run.pass_no, state=RunState.ASSESSING,
+    outcome = run_agent(deps, run, author_agent(deps, repo_config), phase_request, run.pass_no, state=RunState.ASSESSING,
                         validate=lambda data: validate_dispositions(active_ids, data["dispositions"], severities))
     if not outcome.ok:
         return pause(deps, run, outcome.error)
@@ -433,7 +433,7 @@ def _file_adjacent(deps: Deps, run: Run, assessment: dict) -> None:
             inbox_repo.add_evidence(deps.conn, clear, f"PR #{run.pr_number} ({run.head_sha[:9]}): {item.get('evidence', '')}", at)
             continue
         new_id = inbox_repo.add_item(deps.conn, run.repo, {**item, "source_pr": run.pr_number, "source_commit": run.head_sha,
-                                                           "source_run": run.id, "agent": "claude"}, at)
+                                                           "source_run": run.id, "agent": repo(deps, run).review.author}, at)
         for related in ambiguous:
             inbox_repo.add_related(deps.conn, new_id, related, at)
             inbox_repo.add_related(deps.conn, related, new_id, at)

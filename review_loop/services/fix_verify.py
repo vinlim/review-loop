@@ -13,7 +13,7 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import phases as phases_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
-    Deps, agent_env, apply_events, decisions, events_by_finding, instruction_files, now, pass_dir, pause, pull_values, ref, remote_head,
+    Deps, agent_env, author_agent, apply_events, decisions, events_by_finding, instruction_files, now, pass_dir, pause, pull_values, ref, remote_head,
     repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.workspace import registered_script_files
@@ -34,7 +34,7 @@ def phase_fix(deps: Deps, run: Run) -> Run:
     attempt = phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) + 1
     phase_request = request(deps, repo_config, run, "fix", prompt, "fix", directory / f"fix-{attempt}", "write",
                             repo_config.review.author_model, repo_config.review.author_effort, resume=run.author_session)
-    outcome = run_agent(deps, run, deps.author, phase_request, run.pass_no, state=RunState.FIXING)
+    outcome = run_agent(deps, run, author_agent(deps, repo_config), phase_request, run.pass_no, state=RunState.FIXING)
     if not outcome.ok:
         return pause(deps, run, outcome.error)
     run.author_session = outcome.value.session_id or run.author_session

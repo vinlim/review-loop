@@ -15,6 +15,29 @@ class AgentFailure(StrEnum):
 
 
 @dataclass(frozen=True)
+class AgentProfile:
+    """What the coordinator needs to know about an agent CLI before it has an adapter in hand.
+
+    An empty default model or effort leaves the choice to the CLI. `forks_sessions` means resuming a session
+    never appends to it, which is what makes resuming the developer's own session safe."""
+
+    binary: str
+    install_hint: str
+    default_model: str = ""
+    default_effort: str = ""
+    forks_sessions: bool = False
+
+
+AGENT_PROFILES = {
+    "agy": AgentProfile("agy", "install the Antigravity CLI, then run `agy` once to sign in"),
+    "claude": AgentProfile("claude", "install Claude Code, then run `claude` once to log in", "claude-fable-5-1", "high",
+                           forks_sessions=True),
+    "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-6-astra", "ultra"),
+    "opencode": AgentProfile("opencode", "install with `npm i -g opencode-ai`, then run `opencode auth login`", forks_sessions=True),
+}
+
+
+@dataclass(frozen=True)
 class AgentError:
     kind: AgentFailure
     detail: str

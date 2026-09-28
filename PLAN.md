@@ -63,8 +63,8 @@ repository, a PHP and Node application, was registered first and supplies the wo
 | Invocation | `review-loop start <PR URL>`; label-driven enrollment later |
 | Workspace | one dedicated worktree per enrolled PR, on a tool-owned local branch |
 | Agent execution | sequential within a PR; one active PR run at a time |
-| Reviewer | Codex, `gpt-6-astra`, reasoning `ultra`, sandbox `read-only` |
-| Assessor and fixer | Claude, `claude-fable-5-1`, effort `high`; assessment read-only, fix phase write |
+| Reviewer | Codex, `gpt-6-astra`, reasoning `ultra`, sandbox `read-only`; any registered agent per repository (section 32) |
+| Assessor and fixer | Claude, `claude-fable-5-1`, effort `high`; assessment read-only, fix phase write; any registered agent per repository |
 | Alignment | automatic: Codex note, Claude assessment, then blind arbitration by both models with labels swapped |
 | Review budget | 7 review passes (the observed maximum; median is 3), configurable per repository and per run |
 | Fix budget | 2 editing attempts per assessment: initial fix plus one repair after failed checks |
@@ -1151,3 +1151,38 @@ head check that catches a rogue push at verification) rather than a boundary; re
 scripts run with the coordinator's host privileges for allowed authors' PRs, mitigated by the
 scripts-changed pause; the pilot's prepare step without `--js` symlinks built assets to the main checkout,
 so an agent that runs a build writes there.
+
+## 32. Configurable agents (2026-09-28)
+
+Codex reviews and Claude writes by default; each repository can name another agent for either role
+with `reviewer` and `author` under `[repositories.<name>.review]`. The registered agents are `claude`,
+`codex`, `agy` (Antigravity CLI) and `opencode`. Adding one is an adapter behind the same
+`run(PhaseRequest)` boundary plus an `AgentProfile` (binary, default model and effort, whether a
+resumed session is forked). What changed around the adapters:
+
+- **Defaults follow the agent.** An unset model or effort takes the chosen agent's default, and an
+  empty one is not passed at all, so switching agents never inherits another CLI's model. Alignment
+  and arbitration run at `high` unless the repository left effort to the CLI.
+- **The coordinator checks read-only phases.** Headless `agy` allows file writes in the workspace, and
+  opencode's read-only rules are configuration. Every read-only phase now records HEAD and the
+  changed-file list before the agent runs and compares them after; any change pauses the run with
+  `read_only_violated` and no retry, leaving the change for the developer. This covers Claude and
+  Codex too.
+- **Structured output without a schema flag.** opencode gets the schema appended to the prompt; the
+  adapter takes the reply's last JSON object and the usual schema validation and bounded retry apply.
+- **opencode permissions** are set on a tool-owned `review-loop` agent through
+  `OPENCODE_CONFIG_CONTENT`, which outranks a reviewed repository's own `opencode.json`. Read-only
+  denies edits, web access, subagents and every command but read-only git and `ls`; write denies `gh`,
+  `git push` and `git commit`. Reading outside the checkout is limited to the pass directory.
+- **Sessions.** Only Claude Code's desktop sessions are looked up on disk. An explicit
+  `--author-session` is refused at `start` for an author that cannot fork (`codex`, `agy`), so the
+  developer's own session is never appended to. Sessions the tool created are resumed as before.
+- **Labels.** Arbitration records and inbox items carry the configured agent names; one agent in both
+  roles arbitrates twice as `<name>-reviewer` and `<name>-author`.
+- **Doctor and versions** check only the agents some repository uses.
+
+Residuals: the worktree check does not see writes outside the worktree, content changes to a file that
+was already dirty, or ignored files. `agy` and `opencode` load MCP servers from the developer's own
+settings. Both adapters were written from the CLIs' published docs (the `agy` headless reference; a
+community reference for opencode's `--format json` events) and tested offline only; the first
+inspect-only run with each is their Milestone 0.

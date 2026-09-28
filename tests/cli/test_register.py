@@ -28,6 +28,14 @@ def test_registration_detects_the_project_scripts_and_instruction_files(tmp_path
     assert table["allowed_pr_authors"] == ["vinlim"] and table["trusted_logins"] == ["vinlim"]
 
 
+def test_registration_names_the_default_agents_so_the_choice_is_visible(tmp_path):
+    text = registration_toml("webapp", project(tmp_path), "https://github.com/acme/webapp.git", tmp_path / "wt", "vinlim")
+
+    review = tomllib.loads(text)["repositories"]["webapp"]["review"]
+    assert (review["reviewer"], review["author"]) == ("codex", "claude")
+    assert "agy, claude, codex, opencode" in text
+
+
 def test_registration_without_known_scripts_leaves_empty_arrays_for_the_developer_to_fill(tmp_path):
     repo = project(tmp_path, with_scripts=False)
 

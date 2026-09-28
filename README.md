@@ -1,7 +1,7 @@
 # review-loop
 
-Drives a Codex reviewer and a Claude author through pull request review rounds: review, critical
-assessment, scoped fixes, coordinator-run checks, guarded push, replies, rereview, and alignment with
+Drives a reviewer agent and an author agent (Codex and Claude by default) through pull request review
+rounds: review, critical assessment, scoped fixes, coordinator-run checks, guarded push, replies, rereview, and alignment with
 blind arbitration when the two disagree. The developer reads one report at merge time. The design
 and the engineering plan are in `PLAN.md`.
 
@@ -41,7 +41,9 @@ are honoured at the point of each effect.
 A run pauses, never guesses, on: a usage limit, expired auth, a remote head that moved, a dirty or
 foreign worktree, a PR or fix that changes a registered script, checks that fail twice or cannot run
 (a timed-out check counts as unavailable), a commit in the worktree the coordinator did not make, a
-push the remote does not confirm, a GitHub error, or an agent that returns nothing usable. `resume`
+push the remote does not confirm, a GitHub error, an agent that returns nothing usable, or an agent
+that changed the worktree during a read-only phase (`read_only_violated`; the change is left in place
+for you to inspect or discard). `resume`
 continues from the paused phase; after a moved head it goes back through preparation. `stop` and
 `pause` from another terminal take effect before the running loop's next phase.
 
@@ -49,7 +51,38 @@ Agents run with no tokens, no credential helpers (`GIT_CONFIG_GLOBAL` empty, `GI
 `GH_CONFIG_DIR` empty), pushes disabled through `GIT_CONFIG_*` variables, and a `gh` shim on PATH.
 The developer's own git configuration is never touched. Everything posted to GitHub and every
 commit message passes through the attribution filter; the author's desktop session is forked, never
-appended to.
+appended to, and `start --author-session` is refused when the author agent cannot fork one.
+
+## Agents
+
+Each registered repository picks its reviewer and author in `config.toml`. Leave a model or effort
+unset to use that agent's own default.
+
+```toml
+[repositories.webapp.review]
+reviewer = "codex"                       # claude, codex, agy or opencode
+author = "claude"
+# reviewer_model = "gpt-6-astra"
+# author_model = "anthropic/claude-fable-5-1"   # opencode takes provider/model
+```
+
+| Agent | Structured output | Read-only phases held by | Developer's session |
+|---|---|---|---|
+| `claude` | `--json-schema` | tool allow and deny lists | found on disk and forked |
+| `codex` | `--output-schema` | `--sandbox read-only` | not resumed |
+| `agy` | `--json-schema` | `--sandbox` restricts the terminal; file writes are not blocked | not resumed |
+| `opencode` | schema in the prompt, validated after | a tool-owned agent with edits and most commands denied | only with `--author-session`, forked |
+
+Whatever the agent, every read-only phase ends with a check that HEAD and the working tree did not
+change, and the run pauses with `read_only_violated` if they did. The check sees only the worktree, so
+the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
+them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`;
+`agy` and `opencode` load the ones in your own settings.
+
+The `agy` and `opencode` adapters follow those CLIs' published docs and are covered by offline tests,
+but neither has run against the real CLI yet. Try one PR with `--inspect-only` before letting either
+fix code. Adding another CLI means one adapter in `review_loop/adapters/agents/` and an entry in
+`AGENT_PROFILES` and `AGENT_ADAPTERS`.
 
 ## Verify
 

@@ -5,6 +5,7 @@ from review_loop.types.run import RunState
 from tests.fakes.clock import FakeClock
 from tests.fakes.git import FakeGit
 from tests.fakes.github import FakeGitHub
+from tests.services.test_coordinator_phases import with_review
 
 URL = "https://github.com/acme/webapp/pull/1004"
 
@@ -63,3 +64,20 @@ def test_a_pr_in_a_repository_that_is_not_registered_is_refused(settings):
 
     assert not result.ok
     assert result.error == StartRefusal.REPOSITORY_NOT_REGISTERED
+
+
+def test_an_explicit_author_session_is_refused_when_the_author_agent_cannot_fork_it(settings):
+    conn, github, git = make(settings)
+
+    result = start_run(URL, settings=with_review(settings, author="agy"), conn=conn, github=github, git=git, clock=FakeClock(),
+                       versions={}, author_session="conv-123")
+
+    assert not result.ok and result.error == StartRefusal.AUTHOR_SESSION_NOT_FORKABLE
+
+
+def test_session_discovery_is_allowed_for_an_author_that_cannot_fork(settings):
+    conn, github, git = make(settings)
+
+    result = start_run(URL, settings=with_review(settings, author="agy"), conn=conn, github=github, git=git, clock=FakeClock(), versions={})
+
+    assert result.ok and result.value.author_session == "auto"

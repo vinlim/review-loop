@@ -33,6 +33,7 @@ class PauseReason(StrEnum):
     SCRIPTS_CHANGED = "scripts_changed"
     WORKSPACE_FOREIGN = "workspace_foreign"
     GITHUB_ERROR = "github_error"
+    READ_ONLY_VIOLATED = "read_only_violated"
     MANUAL = "manual"
 
 
