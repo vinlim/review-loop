@@ -72,6 +72,11 @@ table it wrote and name anything it left empty, especially `verification.require
 required check, a fix can never be verified. Do not edit the config yourself to fill gaps; tell the
 user what to add.
 
+A required check runs inside the coordinator's sandbox: no credentials, and git pushes disabled for
+every repository the process touches, including temporary ones a test creates. A suite that pushes
+or reaches the network fails there even though it passes in a shell. Name a check that stays local,
+or exclude the tests that do not.
+
 **Success criteria**: every `doctor` line starts with `ok`. A `FAIL` line names its own fix. Auth
 fixes (`codex login`, `gh auth login`, running `claude` once) are the user's to perform; report
 them and stop.
