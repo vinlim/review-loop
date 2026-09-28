@@ -39,16 +39,24 @@ Run artifacts live at `<state_dir>/runs/<run-id>/`.
 
 ## 2. Pick the action, in this order, stopping at the first match
 
+The operation the user names decides the route. A run id or PR URL only says which run or PR it
+applies to; it never chooses the action by itself.
+
 1. **No registration for this repository** (`start` prints `refused: repository_not_registered`,
    or the config has no table whose `remote` matches): go to Onboarding.
-2. **A PR URL, or "review this PR" inside a checkout**: derive the URL with
-   `gh pr view --json url --jq .url` when none was given, then go to Starting a run.
-3. **A run id, or "how is the review going"**: `status`, then `show <run-id>`. If the run is
-   complete, read `report.md`. Go to Reporting.
-4. **A paused run**: consult the pause table before touching anything.
+2. **An explicit pause, resume or stop**: resolve the run id (`status` when only a PR was named),
+   then run that command. Before `resume`, read the pause table.
+3. **An explicit status question** ("how is the review going", "check the run", "is it done"):
+   `status`, then `show <run-id>`. If the run is complete, read `report.md`. Go to Reporting.
+4. **A decision on a disputed finding**: go to Align.
 5. **Inbox words** ("inbox", "adjacent findings", "what did it park"): `inbox list`, then
    `inbox show <id>` for the ones the user asks about.
-6. **A disputed finding the developer has decided**: go to Align.
+6. **An explicit start or review request** ("run review-loop on", "review this PR with the
+   loop"): derive the URL with `gh pr view --json url --jq .url` when none was given, then go to
+   Starting a run.
+7. **A bare run id** with no operation: `show <run-id>` and report its state.
+8. **A bare PR URL** with no operation: `status` to see whether a run exists, then ask whether the
+   user wants it started or checked. Do not start on a URL alone.
 
 ## 3. Onboarding
 
@@ -70,12 +78,25 @@ them and stop.
 
 ## 4. Starting a run
 
-Mode is fixed at start and cannot be changed later:
+Mode is fixed at start and cannot be changed later. `start` reuses any active run for the PR
+with the mode that run already has, whatever flags you pass, and `show` does not print the mode.
+So before promising anything, enrol without driving:
 
-- Words like "dry run", "inspect", "just look", "don't post", "what would it say": add
-  `--inspect-only`. Nothing is posted or pushed.
-- Otherwise run the full loop. Say in your first line that it will post reviews and replies and
-  push verified fixes to the PR branch under the user's GitHub account.
+```bash
+review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run --inspect-only
+```
+
+The one output line reads `run <id> (<state>, publish|inspect) for <url>`. That is the mode the
+run will use.
+
+- Words like "dry run", "inspect", "just look", "don't post", "what would it say": the user wants
+  inspection. If the line says `inspect`, continue with `--inspect-only`. Nothing is posted or
+  pushed. If it says `publish`, an earlier publishing run exists; report its id and do not drive
+  it. The user must `stop` it before an inspect-only run can be created; then repeat the probe.
+- Otherwise run the full loop. If the probe says `inspect`, an earlier dry run exists and will be
+  reused as a dry run; report that and let the user `stop` it first if they want publication.
+  Say in your first line that the loop will post reviews and replies and push verified fixes to
+  the PR branch under the user's GitHub account.
 
 `start` streams one line per phase transition and runs for tens of minutes to hours: phase
 timeouts are 40 minutes for review and 60 for a fix or a verification, and a run allows up to
@@ -83,7 +104,7 @@ seven passes. Bash calls cap at ten minutes, so start it in the background and l
 notification bring you back:
 
 ```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n>
+review-loop start https://github.com/<owner>/<repo>/pull/<n>              # add --inspect-only for a dry run
 ```
 
 Run that with `run_in_background: true`. Tell the user the run id from the first output line and
@@ -128,7 +149,7 @@ Refusals: `repository_not_registered` (Onboarding); `author_not_allowed` (the PR
 | `usage_limit` | an agent CLI hit its quota | tell the user; `resume` after the window they name |
 | `auth_required` | an agent or `gh` login expired | the user renews it in the CLI's own flow; then `resume` |
 | `checks_failed` | required checks failed twice, or could not run | show the verification log path; the user decides |
-| `prepare_failed` | the registered prepare command failed | show its log; the user fixes the setup script |
+| `prepare_failed` | a registered prepare command exited non-zero | its output is not kept; list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose; then `resume` |
 | `agent_failed` | no usable output after bounded retries | show the attempt directory; `resume` once; then report |
 | `workspace_dirty`, `unexpected_commit`, `workspace_foreign` | the worktree changed outside the coordinator | report the path; never clean it yourself |
 | `scripts_changed` | the PR or a fix touched a registered script | the user reads the diff and decides |
@@ -181,8 +202,17 @@ Saving, listing and showing items changes no code and blocks nothing.
 ## 9. Align
 
 `align` is the developer's override for findings the reviewer and author still dispute after
-arbitration. It is never required. Use it only when the user states a decision. Write a file whose
-first line is `fix` or `keep`, followed by their reasoning in their words, then:
+arbitration. It is never required. Use it only when the user states a decision.
+
+Run `show <run-id>` first. `align` records the decision on any run, but only a paused run can
+continue afterwards. A run whose state is `complete` with outcome `blocked` (a BLOCKER that
+arbitration could not settle) is finished: `align` adds the decision to its history and nothing
+else, `resume` refuses it, and `report.md` is not regenerated. Say so, and do not prescribe
+`resume`; the user's options are a new `start` after the PR changes, or acting on the report
+outside the loop.
+
+For a paused run, write a file whose first line is `fix` or `keep`, followed by the user's
+reasoning in their words, then:
 
 ```bash
 review-loop align <run-id> --file decision.md --finding R2-F1
