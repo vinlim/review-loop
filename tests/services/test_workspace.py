@@ -185,3 +185,14 @@ def test_the_shims_directory_holds_the_empty_git_and_gh_configuration_the_enviro
     shims = ensure_shims(tmp_path / "state")
 
     assert (shims / "empty-gitconfig").exists() and (shims / "empty-gh-config").is_dir()
+
+
+def test_a_fallback_check_script_counts_as_a_registered_script(settings):
+    import dataclasses
+
+    from review_loop.services.workspace import registered_script_files
+
+    repo = settings.repositories["webapp"]
+    repo = dataclasses.replace(repo, verification=dataclasses.replace(repo.verification, fallback=[["scripts/full-suite.sh"]]))
+
+    assert "scripts/full-suite.sh" in registered_script_files(repo)

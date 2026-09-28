@@ -90,7 +90,7 @@ def _state_dir(settings: Settings) -> Check:
 
 def _repository(repo) -> Check:
     missing = []
-    for command in repo.workspace.prepare + repo.verification.required + repo.verification.format:
+    for command in repo.workspace.prepare + repo.verification.required + repo.verification.fallback + repo.verification.format:
         for argument in command[:2]:
             if "/" in argument and not (repo.local_path / argument).exists():
                 missing.append(argument)
@@ -105,10 +105,13 @@ def _verification(process: ProcessRunner, repo) -> Check:
     name = f"repository {repo.name} verification"
     if not repo.verification.required:
         return Check(name, False, f"no required check; a fix can never be verified. Add `required` under `[repositories.{repo.name}.verification]`")
-    for command in repo.verification.required:
+    for command in repo.verification.required + repo.verification.fallback:
         if is_pytest_check(command) and _run(process, [command[0], "-c", "import pytest"]).exit_code != 0:
             return Check(name, False, f"{command[0]} cannot import pytest; install it with `{command[0]} -m pip install pytest`")
-    return Check(name, True, "; ".join(" ".join(command) for command in repo.verification.required))
+    detail = "; ".join(" ".join(command) for command in repo.verification.required)
+    if repo.verification.fallback:
+        detail += "; fallback " + "; ".join(" ".join(command) for command in repo.verification.fallback)
+    return Check(name, True, detail)
 
 
 def _worktree_config(process: ProcessRunner, repo) -> Check:

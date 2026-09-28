@@ -139,3 +139,19 @@ def test_append_registration_creates_a_private_home(tmp_path):
     append_registration(home / "config.toml", "[repositories.x]\n", state_dir=home)
 
     assert stat.S_IMODE(home.stat().st_mode) == 0o700
+
+
+def test_registration_gives_a_project_runner_a_full_fallback_for_changes_its_changed_mode_cannot_map(tmp_path):
+    text = registration_toml("webapp", project(tmp_path), "https://github.com/acme/webapp.git", tmp_path / "wt", "vinlim")
+
+    verification = tomllib.loads(text)["repositories"]["webapp"]["verification"]
+    assert verification["fallback"] == [[".claude/run-tests.sh", "full"]]
+
+
+def test_registration_leaves_the_fallback_empty_without_a_project_runner(tmp_path):
+    repo = project(tmp_path, with_scripts=False)
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+
+    text = registration_toml("tool", repo, "https://github.com/x/tool.git", tmp_path / "wt", "vinlim")
+
+    assert tomllib.loads(text)["repositories"]["tool"]["verification"]["fallback"] == []

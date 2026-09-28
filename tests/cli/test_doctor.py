@@ -149,3 +149,13 @@ def test_doctor_passes_a_private_state_directory(settings):
     check = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}["state directory"]
 
     assert check.ok
+
+
+def test_doctor_names_the_fallback_check_beside_the_required_one(settings):
+    repo = settings.repositories["webapp"]
+    with_fallback = dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(
+        repo, verification=dataclasses.replace(repo.verification, fallback=[[".claude/run-tests.sh", "full"]]))})
+
+    check = {check.name: check for check in run_doctor(make(), with_fallback, SCHEMAS)}["repository webapp verification"]
+
+    assert check.ok and ".claude/run-tests.sh changed" in check.detail and "fallback .claude/run-tests.sh full" in check.detail
