@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from review_loop.engine.discussion import Role, make_marker
-from review_loop.engine.report import render_report
+from review_loop.engine.report import fit_for_comment, render_report
 from review_loop.repositories import decisions as decisions_repo
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.repositories import verification as verification_repo
-from review_loop.services.phase_support import Deps, inspect_only, publisher as make_publisher, ref, remote_head, save
+from review_loop.services.phase_support import Deps, inspect_only, now, publisher as make_publisher, ref, remote_head, save
 from review_loop.types.run import Outcome, Run, RunState
+
+# GitHub rejects a comment over 65,536 characters; the difference leaves room for the marker.
+COMMENT_LIMIT = 60_000
 
 
 def _pause_head_changed(deps: Deps, run: Run) -> bool:
@@ -29,9 +32,11 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
         events.setdefault(event["finding_id"], []).append(event)
     inbox_items = [item for item in inbox_repo.list_items(deps.conn, repo=run.repo) if item["source_pr"] == run.pr_number]
     report = render_report(run, findings, events, decisions_repo.list_decisions(deps.conn, run.id),
-                           verification_repo.list_results(deps.conn, run.id), inbox_items, exhausted)
-    (deps.runs_dir / run.id).mkdir(parents=True, exist_ok=True)
-    (deps.runs_dir / run.id / "report.md").write_text(report)
+                           verification_repo.list_results(deps.conn, run.id), inbox_items, exhausted,
+                           commits=_loop_commits(deps, run, events), finished_at=now(deps))
+    report_path = deps.runs_dir / run.id / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report)
     marker = make_marker(Role.AUTHOR, run.id, run.pass_no, "final")
     publishing = not inspect_only(deps, run) and deps.settings.repositories[run.repo].publication.post_author_responses
     if publishing:
@@ -45,7 +50,8 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
         try:
             publisher.reconcile(run.id, pull_ref)
             if not outbox_repo.has_done(deps.conn, run.id, marker):
-                publisher.post(run.id, "final", {"outcome": outcome.value}, marker, report + "\n" + marker,
+                publisher.post(run.id, "final", {"outcome": outcome.value}, marker,
+                               fit_for_comment(report, COMMENT_LIMIT, str(report_path)) + "\n" + marker,
                                lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
         except Exception as error:
             from review_loop.services.phase_support import pause
@@ -56,3 +62,23 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
     if deps.notifier is not None:
         deps.notifier.notify("review-loop", f"PR #{run.pr_number}: {outcome.value.replace('_', ' ')} at {run.head_sha[:9]} after {run.pass_no} passes")
     return save(deps, run, RunState.COMPLETE)
+
+
+def _loop_commits(deps: Deps, run: Run, events: dict[str, list[dict]]) -> list[dict]:
+    """Each fix commit read back from git, so the report shows what was committed rather than what was planned.
+    A commit git cannot describe still appears, without its title and files."""
+    fixes = [event["note"] for items in events.values() for event in items if event["note"].get("commit")]
+    commits = []
+    for pass_no in range(1, run.pass_no + 1):
+        sha = run.extra.get(f"fix_commit_pass_{pass_no}")
+        if not sha:
+            continue
+        try:
+            parent, message = deps.git.commit_info(run.worktree_path, sha)
+            files = deps.git.changed_files(run.worktree_path, parent, sha) if parent else []
+        except RuntimeError:
+            message, files = "", []
+        pushed = any(note["commit"] == sha and note.get("pushed", True) for note in fixes)
+        commits.append({"sha": sha, "pass_no": pass_no, "title": message.strip().splitlines()[0] if message.strip() else "",
+                        "files": files, "pushed": pushed})
+    return commits

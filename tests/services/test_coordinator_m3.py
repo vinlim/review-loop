@@ -355,3 +355,56 @@ def test_e2e_a_pr_closed_externally_stops_writes_and_keeps_history(settings, tmp
 
     assert run.state == RunState.CANCELLED and len(h.github.writes) == writes
     assert len(h.findings()) == 2
+
+
+# --- the final report -----------------------------------------------------------------------------
+
+def run_to_completion(h):
+    h.reviewer.reply(REVIEW_984)
+    h.author.reply(ASSESS_984)
+    h.author.reply(FIX)
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+    return run_loop(h.deps, h.run)
+
+
+def test_e2e_the_final_report_tells_the_run_pass_by_pass_with_the_commit_read_back_from_git(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    h.git.changed = [LOGGER, NUMBERS]
+
+    run = run_to_completion(h)
+
+    sha = run.head_sha[:9]
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    assert f"- `{sha}` fix: redact URLs once and bound the report (pass 1): {LOGGER}, {NUMBERS}" in report
+    assert f"Commit `{sha}` fixed R1-F1 and R1-F2. Checks passed." in report
+    assert "The loop pushed 1 commit touching 2 files." in report
+    final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
+    assert "## Pass by pass" in final and "## Commits" in final
+
+
+def test_the_final_report_is_written_even_when_git_cannot_describe_a_commit(settings, tmp_path):
+    h = harness(settings, tmp_path)
+
+    def unreadable(*args):
+        raise RuntimeError("git log failed")
+
+    push = h.git.on_push
+    h.git.on_push = lambda branch, sha: (push(branch, sha), setattr(h.git, "commit_info", unreadable))
+
+    run = run_to_completion(h)
+
+    assert run.state == RunState.COMPLETE
+    assert f"- `{run.head_sha[:9]}` (title unavailable) (pass 1)" in (tmp_path / "runs" / run.id / "report.md").read_text()
+
+
+def test_a_final_report_longer_than_a_github_comment_is_posted_cut_and_kept_whole_on_disk(settings, tmp_path, monkeypatch):
+    monkeypatch.setattr("review_loop.services.completion_phase.COMMENT_LIMIT", 600)
+    h = harness(settings, tmp_path)
+
+    run = run_to_completion(h)
+
+    final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
+    report_path = tmp_path / "runs" / run.id / "report.md"
+    assert "The report was cut to fit a GitHub comment" in final and str(report_path) in final
+    assert len(final.split("<!-- review-loop")[0]) <= 600
+    assert "## Next step" in report_path.read_text()
