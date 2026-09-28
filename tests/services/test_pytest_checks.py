@@ -58,6 +58,44 @@ def test_a_pytest_config_the_parser_cannot_read_leaves_the_worktree_on_the_path_
     assert pytest_check_command("python", tmp_path, pytest_options(tmp_path) or {}) == ["python", "-m", "pytest", "-q"]
 
 
+def a_directory(path):
+    path.mkdir()
+
+
+def a_link_to_a_directory(path):
+    (path.parent / "elsewhere").mkdir()
+    path.symlink_to(path.parent / "elsewhere")
+
+
+def a_link_to_a_device(path):
+    path.symlink_to(os.devnull)
+
+
+def an_unreadable_file(path):
+    path.write_text("[tool.pytest.ini_options]\n")
+    path.chmod(0)
+
+
+@pytest.mark.parametrize("make", [a_directory, a_link_to_a_directory, a_link_to_a_device, an_unreadable_file])
+def test_a_config_path_that_is_no_readable_file_leaves_the_worktree_on_the_path_for_pytest_to_judge(tmp_path, make):
+    make(tmp_path / "pyproject.toml")
+
+    env = pytest_check_env(PYTEST, str(tmp_path), {"PYTHONPATH": "/extra"})
+
+    assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path), "/extra"])
+    assert pytest_check_command("python", tmp_path, pytest_options(tmp_path) or {}) == ["python", "-m", "pytest", "-q"]
+
+
+@pytest.mark.parametrize("make", [a_directory, a_link_to_a_device])
+def test_like_pytest_the_search_passes_over_a_config_name_that_is_no_regular_file(tmp_path, make):
+    make(tmp_path / "pytest.toml")
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["lib"]\n')
+
+    env = pytest_check_env(PYTEST, str(tmp_path), {})
+
+    assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path / "lib"), str(tmp_path)])
+
+
 def test_a_src_directory_the_config_already_declares_is_not_listed_twice(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = src\n")

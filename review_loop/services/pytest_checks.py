@@ -17,10 +17,11 @@ PYTEST_CONFIG_FILES = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini
 
 
 def pytest_options(project: Path) -> dict | None:
-    """The options of the first file pytest itself would read, in its order; None when none configures pytest."""
+    """The options of the first file pytest itself would read, in its order; None when none configures pytest. As in
+    pytest, only a regular file counts, so a directory or a link to a device at a config name is passed over."""
     for name in PYTEST_CONFIG_FILES:
         path = project / name
-        if path.exists():
+        if path.is_file():
             options = _options_in(path)
             if options is not None:
                 return options
@@ -86,7 +87,7 @@ def _ini_section(path: Path, section: str) -> dict | None:
 def _toml(path: Path) -> dict:
     try:
         return tomllib.loads(path.read_text())
-    except (tomllib.TOMLDecodeError, UnicodeError):
+    except (tomllib.TOMLDecodeError, UnicodeError, OSError):
         return {}
 
 
