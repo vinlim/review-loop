@@ -49,7 +49,8 @@ class CodexAdapter:
                 "-m", request.model, "-c", f'model_reasoning_effort="{request.effort}"',
                 "--output-schema", request.schema_path, "-o", str(result_path), "--json"]
         if request.resume_session_id:
-            argv = ["codex", "exec", "resume", request.resume_session_id, *argv[2:]]
+            # -C and --sandbox are options of `codex exec` that `resume` rejects, so the subcommand follows them.
+            argv += ["resume", request.resume_session_id]
         return argv + ["-"]
 
 
