@@ -377,6 +377,21 @@ def test_a_startup_file_of_an_agent_the_repository_does_not_use_does_not_pause(s
     assert run.state == RunState.ASSESSING
 
 
+@pytest.mark.parametrize("path", [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".codex/config.toml",
+                                  ".codex/hooks.json"])
+def test_a_pr_that_changes_claude_or_codex_project_config_starts_both_agents_since_their_flags_ignore_it(settings, tmp_path, path):
+    h = Harness(settings, tmp_path)
+    h.git.changed = ["app/Models/User.php", path]
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(ASSESS_984)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.FIXING and len(h.reviewer.requests) == 1 and len(h.author.requests) == 1
+
+
 def test_prepare_looks_for_a_desktop_session_of_the_configured_author_agent(settings, tmp_path):
     h = Harness(with_review(settings, author="opencode"), tmp_path)
 

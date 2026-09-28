@@ -86,8 +86,23 @@ Whatever the agent, every read-only phase ends with a check that HEAD and the wo
 change, and the run pauses with `read_only_violated` if they did. The check sees only the worktree, so
 the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
 them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
-`agy` and `opencode` load the ones in your own settings, and also run what the checkout declares at
-startup (`.agents/hooks.json`, `.agents/mcp_config.json`, `.agents/plugins/` and `.agents/agents/` for
+
+A checkout can also declare code for an agent CLI to run at startup, before its permissions apply.
+`claude -p` never asks for workspace trust, so `claude` starts with `--setting-sources ""` and reads
+no settings file. That covers the checkout's `.claude/settings.json` and `.claude/settings.local.json`,
+and your own `~/.claude/settings.json` too: a user hook runs with the checkout as its project
+directory, and any `env` block overrides the guards in the environment the tool builds. Only managed
+settings and the tool's own `--settings` apply, and `--strict-mcp-config` keeps `.mcp.json` off. Log in
+with `claude` or `claude setup-token`; an `apiKeyHelper` in your settings does not reach these runs.
+The flag also leaves every `CLAUDE.md` and `.claude/rules/` file out of Claude's context, yours
+included. Every packet names the repository's `instruction_files` for the agent to read, so list
+`.claude/CLAUDE.md` there if a repository keeps its instructions in it. `codex` starts with
+`--ignore-user-config`, which also drops your list of trusted projects. The worktree then counts as
+untrusted, and Codex loads none of its `.codex/` config, hooks, rules or MCP servers. Without the flag,
+a worktree inherits the trust you gave its main checkout.
+
+`agy` and `opencode` load the MCP servers in your own settings, and also run what the checkout declares
+at startup (`.agents/hooks.json`, `.agents/mcp_config.json`, `.agents/plugins/` and `.agents/agents/` for
 `agy`; `opencode.json` and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can
 switch that off, so the coordinator refuses to start either agent once the PR or a fix has changed one
 of those files, or anything has left one there untracked (`scripts_changed`). That pins what the CLI

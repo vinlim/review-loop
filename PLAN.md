@@ -208,6 +208,11 @@ Mechanical guards, because a worktree is a workspace and a prompt is a wish:
 - MCP servers are off for both CLIs: Codex runs with `--ignore-user-config` plus explicit `-c`
   model settings; Claude runs with `--strict-mcp-config` and an empty `--mcp-config`. A desktop
   MCP server that reads the main checkout's database has no place in a review.
+- Neither CLI runs the checkout's own config. `claude -p` skips the workspace trust prompt, so Claude
+  runs with `--setting-sources ""` and loads no settings file. The user's own settings stay out too:
+  their hooks run with the checkout as the project directory, and an `env` block would override the
+  environment guards above. Codex's `--ignore-user-config` also drops the trusted-project list, so the worktree is
+  untrusted and its `.codex/` config, hooks, rules and MCP servers never load.
 - The reviewer's sandbox is `read-only`. The assessment phase runs Claude with a read-only tool
   list. Only the fix phase may edit, and it cannot push or post.
 
@@ -282,7 +287,7 @@ claude -p --output-format json --json-schema "$(cat schemas/assessment.json)" \
   --model claude-fable-5-1 --effort high \
   --tools "Read,Grep,Glob,Bash" --allowedTools "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)" \
   --disallowedTools "Edit" "Write" "NotebookEdit" "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)" \
-  --strict-mcp-config --mcp-config "{}" --settings review-loop/claude-settings.json \
+  --strict-mcp-config --mcp-config "{}" --setting-sources "" --settings review-loop/claude-settings.json \
   < "$RUN/assess-prompt.md" > "$RUN/assessment.json"
 ```
 
@@ -306,13 +311,14 @@ without alignment. The assessor owns its half of any oscillation: over-claims ("
 claude -p --output-format json --json-schema "$(cat schemas/fix.json)" \
   --model claude-fable-5-1 --effort high --permission-mode bypassPermissions \
   --disallowedTools "Bash(gh *)" "Bash(git push *)" \
-  --strict-mcp-config --mcp-config "{}" --settings review-loop/claude-settings.json \
+  --strict-mcp-config --mcp-config "{}" --setting-sources "" --settings review-loop/claude-settings.json \
   < "$RUN/fix-prompt.md" > "$RUN/fix.json"
 ```
 
 The request lists the accepted ids, their protected behaviours, and the scope boundary. Claude edits
-code and tests and reports each change with the finding it addresses. The project's CLAUDE.md,
-skills and hooks load as in a desktop session; `claude-settings.json` turns attribution off. Claude
+code and tests and reports each change with the finding it addresses. No settings file, hook, skill,
+CLAUDE.md or rule loads, the user's included (`--setting-sources ""`); the packet names the
+instruction files to follow. `claude-settings.json` turns attribution off. Claude
 may run tests for its own confidence; the coordinator's run in E is the one that counts.
 
 The coordinator inspects the diff and the changed-file inventory (including new and deleted files).
