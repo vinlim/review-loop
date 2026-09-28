@@ -47,8 +47,11 @@ applies to; it never chooses the action by itself.
 2. **An explicit pause, resume or stop**: resolve the run id (`status` when only a PR was named),
    then run that command. Before `resume`, read the pause table.
 3. **An explicit status question** ("how is the review going", "check the run", "is it done"):
-   `status`, then `show <run-id>`. If the run is complete, read `report.md`. Go to Reporting. If it
-   is in a working state and this session has no `wait` running on it, start one (While it runs).
+   `status`, then `show <run-id>`, then exactly one of these, by the state shown:
+   - If working: make sure this session has `wait <run-id>` running in the background, starting
+     one if it has none, then go to While it runs.
+   - If complete: read `report.md` and go to Reporting.
+   - Otherwise (paused, failed, cancelled): report that state; for a pause, go to Paused runs.
 4. **A decision on a disputed finding**: go to Align.
 5. **Inbox words** ("inbox", "adjacent findings", "what did it park"): `inbox list`, then
    `inbox show <id>` for the ones the user asks about.
@@ -256,8 +259,12 @@ reasoning in their words, then:
 
 ```bash
 review-loop align <run-id> --file decision.md --finding R2-F1
-review-loop resume <run-id>
+review-loop resume <run-id> --detach
+review-loop wait <run-id>
 ```
+
+Run the `wait` with `run_in_background: true`, as after any resume; the notification brings you
+back when the run stops.
 
 Without `--finding` the decision applies to every disputed finding in the run, so pass the ids
 unless the user said "all of them".
