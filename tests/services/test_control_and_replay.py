@@ -179,24 +179,24 @@ def test_a_review_pass_that_crashed_after_posting_is_not_posted_again_on_resume(
     h = harness(settings, tmp_path)
     run = step(h.deps, h.run)
     h.reviewer.reply(REVIEW_984)
-    original_save = runs_repo.save_run
+    original_save = runs_repo.save_run_unless_controlled  # the write every phase transition goes through
     calls = {"n": 0}
 
     def crash_after_publish(conn, run_object):
         if [w for w in h.github.writes if w[0] == "post_review"] and calls["n"] == 0:
             calls["n"] += 1
             raise RuntimeError("simulated crash after publication, before the transition was saved")
-        original_save(conn, run_object)
+        return original_save(conn, run_object)
 
     import review_loop.services.phase_support as support
-    support.runs_repo.save_run = crash_after_publish
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
     try:
         try:
             step(h.deps, run)
         except RuntimeError:
             pass
     finally:
-        support.runs_repo.save_run = original_save
+        support.runs_repo.save_run_unless_controlled = original_save
 
     persisted = runs_repo.get_run(h.conn, run.id)
     assert persisted.pass_no == 1 and len(h.findings()) == 2
