@@ -500,7 +500,10 @@ separately: `usage_limit`, `auth_required`, `head_changed`, `workspace_dirty`, `
 Before any external write, the intended operation is saved; after it, the receipt. On restart,
 unfinished operations are reconciled against the remote before any retry. A run records tool
 version, CLI versions, models and effort, prompt, schema and policy versions. Credentials stay in
-the CLIs' own stores; captured output is redacted and files are created with restrictive modes.
+the CLIs' own stores, and the author CLI's login travels with its adapter alone: no project command
+and no other agent receives it. The state directory is the confidentiality boundary, created private
+(0700), checked by `doctor`, with backup archives written 0600. Captured output is kept whole: a
+process that was given no secret cannot leak one, and redaction would silently alter evidence.
 
 ## 16. Failure handling
 

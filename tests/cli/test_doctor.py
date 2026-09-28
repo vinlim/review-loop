@@ -54,3 +54,25 @@ def test_doctor_fails_when_a_registered_prepare_script_is_missing(settings, tmp_
 
     assert not checks["repository webapp"].ok
     assert ".claude/worktree-setup.sh" in checks["repository webapp"].detail
+
+
+def test_doctor_fails_a_state_directory_other_accounts_can_read_with_the_chmod_fix(settings):
+    import os
+
+    settings.state_dir.mkdir(parents=True)
+    os.chmod(settings.state_dir, 0o755)
+
+    check = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}["state directory"]
+
+    assert not check.ok and f"chmod 700 {settings.state_dir}" in check.detail
+
+
+def test_doctor_passes_a_private_state_directory(settings):
+    import os
+
+    settings.state_dir.mkdir(parents=True)
+    os.chmod(settings.state_dir, 0o700)
+
+    check = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}["state directory"]
+
+    assert check.ok

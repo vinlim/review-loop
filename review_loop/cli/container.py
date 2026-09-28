@@ -14,6 +14,7 @@ from review_loop.adapters.github_gh import GhGitHub
 from review_loop.adapters.process import SubprocessRunner
 from review_loop.config.settings import Settings, load_settings
 from review_loop.repositories.db import connect, migrate
+from review_loop.services.state_dir import ensure_private_dir
 
 TOOL_VERSION = "0.1.0"
 
@@ -50,7 +51,7 @@ def default_home() -> Path:
 def build_container(home: Path | None = None) -> Container:
     home = home or default_home()
     settings = load_settings(home / "config.toml")
-    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(settings.state_dir)
     conn = connect(str(settings.state_dir / "state.db"))
     migrate(conn)
     process = SubprocessRunner()

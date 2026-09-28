@@ -123,7 +123,7 @@ def test_each_agent_attempt_gets_its_own_output_directory(settings, tmp_path):
     assert len(dirs) == 2 and dirs[0] != dirs[1] and dirs[0].endswith("attempt-1") and dirs[1].endswith("attempt-2")
 
 
-def test_agents_receive_the_author_credential_but_prepare_and_check_commands_do_not(settings, tmp_path):
+def test_no_phase_request_and_no_project_command_carries_the_author_cli_login(settings, tmp_path):
     h = harness(settings, tmp_path)
     h.deps.base_env["CLAUDE_CODE_OAUTH_TOKEN"] = "author-token"
     run = to_verifying(h)
@@ -131,6 +131,6 @@ def test_agents_receive_the_author_credential_but_prepare_and_check_commands_do_
     step(h.deps, run)
 
     agent_requests = h.reviewer.requests + h.author.requests
-    assert agent_requests and all(r.env.get("CLAUDE_CODE_OAUTH_TOKEN") == "author-token" for r in agent_requests)
+    assert len(agent_requests) >= 3 and all("CLAUDE_CODE_OAUTH_TOKEN" not in r.env for r in agent_requests)
     project_calls = [c for c in h.process.calls if c["argv"][0] in ("bash", ".claude/run-tests.sh")]
     assert len(project_calls) >= 2 and all("CLAUDE_CODE_OAUTH_TOKEN" not in c["env"] for c in project_calls)

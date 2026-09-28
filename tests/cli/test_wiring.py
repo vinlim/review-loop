@@ -32,3 +32,12 @@ def test_the_author_session_finder_scans_the_claude_projects_dir(settings, tmp_p
 
     assert deps.find_author_session("claude/change") == "abc"
     assert deps.find_author_session("other") == ""
+
+
+def test_build_deps_hands_the_author_cli_login_to_the_claude_adapter(settings, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "author-token")
+
+    deps = build_deps(container(settings), inspect_only=False, platform="linux")
+
+    assert deps.author.oauth_token == "author-token"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in deps.base_env
