@@ -1,10 +1,13 @@
 import os
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
 from review_loop.adapters.git_cli import GitCli
 from review_loop.adapters.process import SubprocessRunner
+from review_loop.services.phase_support import read_only_breach, read_only_state
+from review_loop.types.agents import PhaseRequest
 from tests.fakes.process import FakeProcessRunner
 
 
@@ -173,3 +176,32 @@ def test_paths_differing_from_a_base_include_ignored_files_symlinks_and_names_gi
     paths = git.paths_differing_from(str(repo), base, [".agents", ".opencode", "opencode.json"])
 
     assert sorted(paths) == [".agents", ".opencode/cache/pwn.ts", '.opencode/plugins/my "plugin".ts']
+
+
+def test_file_lists_keep_an_unstaged_first_entry_whole_and_names_unquoted(repo):
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+    base = sh(repo, "git", "rev-parse", "HEAD")
+    quoted = 'my "draft".txt'
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "run-tests.sh").write_text("exit 0\n")
+    (repo / quoted).write_text("draft\n")
+    sh(repo, "git", "add", ".claude", quoted)
+    sh(repo, "git", "commit", "-q", "-m", "scripts")
+    head = sh(repo, "git", "rev-parse", "HEAD")
+    (repo / ".claude" / "run-tests.sh").write_text("exit 0 # edited by a fix, not staged\n")
+    (repo / quoted).write_text("changed too\n")
+    (repo / "new file.txt").write_text("untracked\n")
+
+    assert sorted(git.changed_files(str(repo), base, head)) == [".claude/run-tests.sh", quoted]
+    assert sorted(git.working_changed_files(str(repo))) == [".claude/run-tests.sh", quoted, "new file.txt"]
+
+
+def test_the_read_only_check_sees_a_rewrite_of_an_unstaged_file_through_real_git(repo, tmp_path):
+    deps = SimpleNamespace(git=GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]}))
+    request = PhaseRequest(phase="review", prompt="", schema_path="", cwd=str(repo), env={}, timeout_seconds=60,
+                           model="", effort="", output_dir=str(tmp_path / "pass-1" / "review"))
+    (repo / "a.txt").write_text("edited before the phase\n")
+    before = read_only_state(deps, request)
+    (repo / "a.txt").write_text("rewritten during it\n")
+
+    assert read_only_breach(deps, request, before) == "the worktree changed during a read-only phase: a.txt"

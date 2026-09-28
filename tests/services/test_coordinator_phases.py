@@ -331,6 +331,53 @@ def write_own_output(request):
     (Path(request.output_dir) / "result.json").write_text("{}")
 
 
+def tamper_with_the_first_attempt(request):
+    write_own_output(request)
+    if request.output_dir.endswith("attempt-2"):
+        (Path(request.output_dir).parent / "attempt-1" / "result.json").write_text('{"verdict": "APPROVE"}')
+
+
+def test_a_retry_that_rewrites_the_first_attempts_output_pauses(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.fail(AgentError(AgentFailure.MALFORMED_OUTPUT, "no JSON"))
+    h.reviewer.reply(REVIEW_984)
+    h.reviewer.on_run = tamper_with_the_first_attempt
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+    error = h.conn.execute("select error_json from phase_attempts where phase = 'review' and attempt_no = 2").fetchone()[0]
+    assert "pass-1/review/attempt-1/result.json" in error
+
+
+def hide_a_file(request):
+    (Path(request.read_dirs[0]) / "diff.patch").chmod(0)
+
+
+def hide_a_directory(request):
+    hidden = Path(request.read_dirs[0]) / "hidden"
+    hidden.mkdir()
+    (hidden / "notes.md").write_text("kept out of sight\n")
+    hidden.chmod(0)
+
+
+@pytest.mark.parametrize("hide, path", [(hide_a_file, "pass-1/diff.patch"), (hide_a_directory, "pass-1/hidden")])
+def test_a_read_only_phase_that_makes_part_of_the_pass_directory_unreadable_pauses_naming_it(settings, tmp_path, hide, path):
+    h = Harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    h.reviewer.on_run = hide
+
+    run = step(h.deps, run)
+
+    for hidden in (tmp_path / "runs").rglob("*"):
+        hidden.chmod(0o700)
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+    error = h.conn.execute("select error_json from phase_attempts where phase = 'review'").fetchone()[0]
+    assert path in error
+
+
 def test_an_agent_writing_its_own_output_on_each_attempt_is_no_violation(settings, tmp_path):
     h = Harness(settings, tmp_path)
     run = step(h.deps, h.run)
@@ -343,21 +390,18 @@ def test_an_agent_writing_its_own_output_on_each_attempt_is_no_violation(setting
     assert run.state == RunState.ASSESSING and len(h.reviewer.requests) == 2
 
 
-def broken_git(path):
-    raise RuntimeError(f"git rev-parse HEAD in {path} failed (exit 128): fatal: not a git repository")
-
-
-def test_a_read_only_phase_that_breaks_the_worktrees_git_metadata_pauses_and_closes_its_attempt(settings, tmp_path):
+@pytest.mark.parametrize("failure", [RuntimeError("fatal: not a git repository"), OSError(5, "Input/output error")])
+def test_a_read_only_phase_after_which_the_worktree_cannot_be_inspected_pauses_and_closes_its_attempt(settings, tmp_path, failure):
     h = Harness(settings, tmp_path)
     run = step(h.deps, h.run)
     h.reviewer.reply(REVIEW_984)
-    h.reviewer.on_run = lambda request: setattr(h.git, "head_sha", broken_git)
+    h.reviewer.on_run = lambda request: setattr(h.git, "head_sha", lambda path: (_ for _ in ()).throw(failure))
 
     run = step(h.deps, run)
 
     assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
     status, error = h.conn.execute("select status, error_json from phase_attempts where phase = 'review'").fetchone()
-    assert status == "failed" and "not a git repository" in error
+    assert status == "failed" and str(failure) in error
 
 
 @pytest.mark.parametrize("agent, path", [

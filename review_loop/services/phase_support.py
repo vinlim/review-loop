@@ -7,7 +7,6 @@ import hashlib
 import os
 import sqlite3
 import stat
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -82,12 +81,12 @@ def run_agent(deps: Deps, run: Run, agent_name: str, request: PhaseRequest, pass
     agent = deps.agents[agent_name]
     read_only = request.tools_policy != "write"
     attempts = 2 if read_only else 1
-    before = read_only_state(deps, request) if read_only else None
     for attempt in range(1, attempts + 1):
         attempt_request = dataclasses.replace(request, output_dir=str(Path(request.output_dir) / f"attempt-{attempt}"))
+        before = read_only_state(deps, attempt_request) if read_only else None
         attempt_id = phases_repo.record_attempt(deps.conn, run.id, request.phase, pass_no, attempt, now(deps), input_path=attempt_request.output_dir)
         result = agent.run(attempt_request)
-        breach = read_only_breach(deps, request, before) if read_only else ""
+        breach = read_only_breach(deps, attempt_request, before) if read_only else ""
         if breach:
             phases_repo.finish_attempt(deps.conn, attempt_id, "failed", now(deps),
                                        error={"kind": PauseReason.READ_ONLY_VIOLATED, "detail": breach})
@@ -111,7 +110,8 @@ def run_agent(deps: Deps, run: Run, agent_name: str, request: PhaseRequest, pass
 class ReadOnlyState:
     """What a read-only phase must leave as it found it, each file fingerprinted: the worktree's HEAD and every path
     git reports as changed or untracked, and every file in the directories the agent is granted for reading apart
-    from the phase's own output directory, where the adapter writes each attempt. Ignored files are not compared."""
+    from the attempt's own output directory, where the adapter writes. Earlier attempts' output is compared like
+    anything else. Ignored files are not."""
 
     head: str
     worktree: dict[str, str]
@@ -120,18 +120,19 @@ class ReadOnlyState:
 
 def read_only_state(deps: Deps, request: PhaseRequest) -> ReadOnlyState:
     worktree = {name: fingerprint(Path(request.cwd) / name) for name in deps.git.working_changed_files(request.cwd)}
-    granted = {str(file.relative_to(Path(directory).parent)): fingerprint(file)
-               for directory in request.read_dirs for file in _granted_files(Path(directory), skip=Path(request.output_dir))}
+    granted: dict[str, str] = {}
+    for directory in request.read_dirs:
+        granted.update(_granted_fingerprints(Path(directory), skip=Path(request.output_dir)))
     return ReadOnlyState(deps.git.head_sha(request.cwd), worktree, granted)
 
 
 def read_only_breach(deps: Deps, request: PhaseRequest, before: ReadOnlyState) -> str:
-    """Why the state no longer matches the one before a read-only phase, or "" when it does. A worktree git can no
-    longer read counts: the agent may have removed or rewritten its .git."""
+    """Why the state no longer matches the one before a read-only phase, or "" when it does. State that can no longer
+    be read counts: the agent may have removed or rewritten the worktree's .git, or left something still writing."""
     try:
         after = read_only_state(deps, request)
-    except RuntimeError as error:
-        return f"the worktree cannot be inspected after a read-only phase: {error}"
+    except (RuntimeError, OSError) as error:
+        return f"the worktree or a granted directory cannot be inspected after a read-only phase: {error}"
     if after.head != before.head:
         return "HEAD moved during a read-only phase"
     if changed := _differences(before.worktree, after.worktree):
@@ -142,7 +143,8 @@ def read_only_breach(deps: Deps, request: PhaseRequest, before: ReadOnlyState) -
 
 
 def fingerprint(path: Path) -> str:
-    """Content, mode and symlink target, so rewriting a file that was already changed still shows."""
+    """Content, mode and symlink target, so rewriting a file that was already changed still shows. A file its owner
+    cannot read is fingerprinted as such, so a chmod shows as a changed mode instead of stopping the comparison."""
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -151,16 +153,25 @@ def fingerprint(path: Path) -> str:
         return f"link {os.readlink(path)}"
     if not stat.S_ISREG(info.st_mode):
         return f"mode {info.st_mode:o}"
-    with path.open("rb") as handle:
-        return f"{info.st_mode:o} {hashlib.file_digest(handle, 'sha256').hexdigest()}"
+    try:
+        with path.open("rb") as handle:
+            return f"{info.st_mode:o} {hashlib.file_digest(handle, 'sha256').hexdigest()}"
+    except PermissionError:
+        return f"{info.st_mode:o} unreadable"
 
 
-def _granted_files(directory: Path, skip: Path) -> Iterator[Path]:
-    """Files and symlinks under directory, never following a link and never entering skip."""
-    for root, dirs, files in os.walk(directory):
+def _granted_fingerprints(directory: Path, skip: Path) -> dict[str, str]:
+    """Every file and symlink under directory, keyed by its path from the directory's parent, never following a link
+    or entering skip. A directory that cannot be listed is recorded as such, so hiding a subtree still shows."""
+    found: dict[str, str] = {}
+    unlistable: list[OSError] = []
+    for root, dirs, files in os.walk(directory, onerror=unlistable.append):
         dirs[:] = [name for name in dirs if Path(root, name) != skip]
-        yield from (Path(root, name) for name in files)
-        yield from (Path(root, name) for name in dirs if Path(root, name).is_symlink())
+        for path in [Path(root, name) for name in files] + [Path(root, name) for name in dirs if Path(root, name).is_symlink()]:
+            found[str(path.relative_to(directory.parent))] = fingerprint(path)
+    for error in unlistable:
+        found[str(Path(error.filename).relative_to(directory.parent))] = f"unlistable: {error.strerror}"
+    return found
 
 
 def _differences(before: dict[str, str], after: dict[str, str]) -> str:
