@@ -50,6 +50,15 @@ class Budgets:
     max_alignment_exchanges: int
 
 
+@dataclass(frozen=True)
+class AgentChoice:
+    """Which CLI a role runs and the model and effort it was given; empty model or effort means the CLI chose."""
+
+    agent: str
+    model: str
+    effort: str
+
+
 @dataclass
 class Run:
     id: str
@@ -75,3 +84,4 @@ class Run:
     created_at: str = ""
     updated_at: str = ""
     extra: dict[str, str] = field(default_factory=dict)
+    agents: dict[str, AgentChoice] = field(default_factory=dict)

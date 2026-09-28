@@ -1,12 +1,14 @@
 from review_loop.cli.render import render_show, render_status
-from review_loop.types.run import Budgets, PauseReason, Run, RunState
+from review_loop.types.run import AgentChoice, Budgets, PauseReason, Run, RunState
+
+AGENTS = {"reviewer": AgentChoice("codex", "gpt-5.6-sol", "xhigh"), "author": AgentChoice("claude", "claude-opus-5-5", "xhigh")}
 
 
-def run(state=RunState.REVIEWING, pause_reason=None):
+def run(state=RunState.REVIEWING, pause_reason=None, agents=AGENTS):
     return Run(id="webapp-1004-20260927-100000", repo="webapp", pr_number=1004, pr_url="https://github.com/acme/webapp/pull/1004",
                pr_author="vinlim", head_ref="claude/x", base_ref="main", head_sha="a" * 40, base_sha="b" * 40, merge_base_sha="c" * 40,
                state=state, budgets=Budgets(7, 2, 1), versions={"codex": "0.157.1"}, pass_no=2, pause_reason=pause_reason,
-               created_at="2026-09-27T10:00:00+00:00", updated_at="2026-09-27T11:30:00+00:00")
+               created_at="2026-09-27T10:00:00+00:00", updated_at="2026-09-27T11:30:00+00:00", agents=agents)
 
 
 def test_status_lists_each_run_with_its_state_pass_and_pause_reason():
@@ -18,9 +20,27 @@ def test_status_lists_each_run_with_its_state_pass_and_pause_reason():
     assert "paused (usage_limit)" in lines[1]
 
 
-def test_show_prints_the_commits_budgets_and_versions_of_one_run():
-    text = render_show(run(), findings=[])
+def test_show_prints_the_commits_budgets_versions_and_agents_of_one_run():
+    text = render_show(run(), findings=[], configured=AGENTS)
 
     assert "a" * 40 in text and "c" * 40 in text
     assert "passes 2/7" in text and "codex 0.157.1" in text
+    assert "agents: reviewer codex model gpt-5.6-sol effort xhigh; author claude model claude-opus-5-5 effort xhigh" in text
+    assert "agents in config now" not in text
     assert "no findings yet" in text
+
+
+def test_show_adds_the_current_config_when_it_differs_from_what_the_run_recorded():
+    configured = {**AGENTS, "author": AgentChoice("opencode", "anthropic/claude-opus-5-5", "")}
+
+    text = render_show(run(), findings=[], configured=configured)
+
+    assert "agents: reviewer codex model gpt-5.6-sol effort xhigh; author claude model claude-opus-5-5 effort xhigh" in text
+    assert "agents in config now: reviewer codex model gpt-5.6-sol effort xhigh; author opencode model anthropic/claude-opus-5-5 effort CLI default" in text
+
+
+def test_show_says_when_a_run_predates_the_agent_record():
+    text = render_show(run(agents={}), findings=[], configured=AGENTS)
+
+    assert "agents: not recorded" in text
+    assert "agents in config now: reviewer codex" in text

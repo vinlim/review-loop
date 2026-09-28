@@ -62,8 +62,10 @@ unset to use that agent's own default.
 [repositories.webapp.review]
 reviewer = "codex"                       # claude, codex, agy or opencode
 author = "claude"
-# reviewer_model = "gpt-6-astra"
-# author_model = "anthropic/claude-fable-5-1"   # opencode takes provider/model
+# reviewer_model = "gpt-5.6-sol"
+# reviewer_effort = "xhigh"
+# author_model = "anthropic/claude-opus-5-5"   # opencode takes provider/model
+# author_effort = "xhigh"
 ```
 
 | Agent | Structured output | Read-only phases held by | Developer's session |

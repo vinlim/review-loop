@@ -30,9 +30,9 @@ class AgentProfile:
 
 AGENT_PROFILES = {
     "agy": AgentProfile("agy", "install the Antigravity CLI, then run `agy` once to sign in"),
-    "claude": AgentProfile("claude", "install Claude Code, then run `claude` once to log in", "claude-fable-5-1", "high",
+    "claude": AgentProfile("claude", "install Claude Code, then run `claude` once to log in", "claude-opus-5-5", "xhigh",
                            forks_sessions=True),
-    "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-6-astra", "ultra"),
+    "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-5.6-sol", "xhigh"),
     "opencode": AgentProfile("opencode", "install with `npm i -g opencode-ai`, then run `opencode auth login`", forks_sessions=True),
 }
 
