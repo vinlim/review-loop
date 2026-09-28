@@ -7,9 +7,8 @@ import subprocess
 from review_loop.adapters.git_cli import GitCli
 from review_loop.adapters.process import SubprocessRunner
 from review_loop.types.protocols import CompletedRun
-from tests.adapters.test_git_cli import repo  # noqa: F401  (fixture)
+from tests.adapters.test_git_cli import repo, sh  # noqa: F401  (fixture)
 from tests.fakes.process import FakeProcessRunner
-from tests.gitenv import sh
 
 URL = "https://github.com/acme/webapp.git"
 OLD, NEW = "a" * 40, "b" * 40

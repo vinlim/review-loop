@@ -9,7 +9,6 @@ from review_loop.services.workspace import WorkspaceProblem, prepare_workspace
 from review_loop.types.run import Budgets, Run, RunState
 from tests.fakes.git import FakeGit
 from tests.fakes.process import FakeProcessRunner
-from tests.gitenv import plain_git_env, sh
 
 
 def run_for(pr=1004):
@@ -24,6 +23,10 @@ def make(settings, tmp_path):
     process.script(["bash", ".claude/worktree-setup.sh"])
     repo = settings.repositories["webapp"]
     return log, git, process, repo
+
+
+def sh(cwd, *argv):
+    return subprocess.run(argv, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 def real_checkout(local: Path, origin: Path) -> str:
@@ -75,8 +78,7 @@ def test_prepare_refuses_pushes_from_its_worktree_and_leaves_the_main_checkout_p
 
     assert result.ok
     assert sh(repo.local_path, "git", "remote", "get-url", "--push", "--all", "origin") == main_push_url
-    push = subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/leak"], cwd=result.value.path, capture_output=True, text=True,
-                          env=plain_git_env())
+    push = subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/leak"], cwd=result.value.path, capture_output=True, text=True)
     assert push.returncode != 0
     assert sh(repo.local_path, "git", "ls-remote", "origin", "refs/heads/leak") == ""
 
