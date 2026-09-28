@@ -69,8 +69,10 @@ review-loop doctor
 `repo add` detects `.claude/worktree-setup.sh`, `.claude/run-tests.sh`, `pint.json` and the
 instruction files, and appends a `[repositories.<name>]` table to the config. Show the user the
 table it wrote and name anything it left empty, especially `verification.required`: with no
-required check, a fix can never be verified. Do not edit the config yourself to fill gaps; tell the
-user what to add.
+required check, a fix can never be verified. A project runner also gets its `full` mode as
+`verification.fallback`, which runs when the `changed` mode selected nothing for the diff (a
+migration, config or routes change) and decides in its place; name that too when the runner has no
+such mode. Do not edit the config yourself to fill gaps; tell the user what to add.
 
 A required check runs as an ordinary subprocess in the tool's worktree, in the sanitised
 environment the coordinator builds for every project command and agent: the known token variables
@@ -83,6 +85,11 @@ only to the Claude agent's process, so no check, prepare command or other agent 
 Network access is not blocked and other variables pass through. So register only a check that is
 safe to run against code the PR controls, and expect a suite that pushes, even to a local remote,
 to fail there although it passes in a shell.
+
+`doctor` also sends each configured agent one small request with the model and effort the config
+gives it. A `FAIL agent <cli> <model> <effort>` line quotes the CLI's own error: the model needs a
+newer CLI (`claude update`, `npm i -g @openai/codex`), or the config names a model the CLI cannot
+serve. Both fixes are the user's.
 
 **Success criteria**: every `doctor` line starts with `ok`. A `FAIL` line names its own fix. Auth
 fixes (`codex login`, `gh auth login`, running `claude` once) are the user's to perform; report
@@ -104,28 +111,35 @@ Mode is fixed at start and cannot be changed later. Decide it from the request:
 that run's mode differs from the flags you pass. It never switches a run's mode, so the one
 command with the requested flags is both the check and the start.
 
-`start` streams one line per phase transition and runs for tens of minutes to hours: phase
-timeouts are 40 minutes for review and 60 for a fix or a verification, and a run allows up to
-seven passes. Bash calls cap at ten minutes, so start it in the background and let the completion
-notification bring you back:
+A run takes tens of minutes to hours: phase timeouts are 40 minutes for review and 60 for a fix or
+a verification, and a run allows up to seven passes. Hand it to a coordinator in its own session, so
+it survives this session ending, then follow it:
 
 ```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n>                  # add --inspect-only for a dry run
+review-loop start https://github.com/<owner>/<repo>/pull/<n> --detach         # add --inspect-only for a dry run
+review-loop wait <run-id>
 ```
 
-Run that with `run_in_background: true`. The first output line reads
-`run <id> (<state>, publish|inspect) for <url>`. Tell the user the run id and that the run continues
-while the session is open. A reused run that is `paused` exits at once with code 1 and its pause
-reason, because the loop treats a paused run as stopped: go to Paused runs.
+Run `start --detach` in the foreground. It enrols the run, sends each agent one probe with its
+model (a few seconds), and returns at once. The first output line reads
+`run <id> (<state>, publish|inspect) for <url>`; the last names the coordinator's pid, its log at
+`<state_dir>/runs/<run-id>/coordinator.log`, and the `wait` command. Then run `wait <run-id>` with
+`run_in_background: true` and let its completion notification bring you back: it prints one line
+per phase transition and ends with the line and exit code a foreground run would. Tell the user the
+run id and that the run continues even if this session ends; a later `status` or `wait` picks it up.
+A reused run that is `paused` exits at once with code 1 and its pause reason, because the loop treats
+a paused run as stopped: go to Paused runs. A failed probe does the same, with `agent_unavailable`.
 
-Exit codes:
+Exit codes of `wait` and of a foreground `start`:
 
 | Code | Meaning | What to do |
 |---|---|---|
 | 0 | complete, including outcome `blocked` | read `report.md`; its headline says which |
-| 1 | paused, failed or cancelled | `show <run-id>`, then the pause table, or report the terminal state |
+| 1 | paused, failed or cancelled, or `(no coordinator)` | `show <run-id>`, then the pause table, or report the terminal state; a run with no coordinator gets `resume <run-id> --detach` |
 | 2 | refused | the stderr line says why; see refusals below |
 | 3 | another coordinator holds the lock | a run for this PR is already going; `status`, do not start another |
+
+`start --detach` itself exits 0 once the run is handed over, 1 when the probe paused it, and 2 or 3 as above.
 
 Refusals: `repository_not_registered` (Onboarding); `author_not_allowed` (the PR author is not in
 `allowed_pr_authors`; only the user may widen that list); `pull_not_open`; `fork_not_supported`;
@@ -137,8 +151,11 @@ have told the user the id.
 
 ## 5. While it runs
 
-- Check `status` when the user asks or when a background notification arrives. Do not poll in a
+- Check `status` when the user asks or when the `wait` notification arrives. Do not poll in a
   loop; a phase legitimately takes half an hour.
+- A `wait` that ends with `(no coordinator)` means the coordinator process is gone: `resume
+  <run-id> --detach`, then `wait` again. Read `coordinator.log` in the run directory when it happens
+  twice.
 - Never open `events.jsonl` files. They run to megabytes. When the user wants detail, read the
   current pass directory, `<state_dir>/runs/<run-id>/pass-N/`: `review.md` is the rendered review,
   `review-output.json` the structured one, `packet.md` what the agents were given.
@@ -161,6 +178,8 @@ have told the user the id.
 | `checks_failed` | required checks failed twice, or could not run | show the verification log path; the user decides |
 | `prepare_failed` | a registered prepare command exited non-zero | `show <run-id>` prints the prepare log's path, `<state_dir>/runs/<run-id>/prepare-<n>.log` (one per attempt), and its last lines; read the whole log when the tail does not show which command failed, and report the command and its error. If the log does not explain the failure, list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose. `resume` once the cause is fixed |
 | `agent_failed` | no usable output after bounded retries | show the attempt directory; `resume` once; then report |
+| `agent_unavailable` | an agent CLI cannot serve its configured model; the run was probed before any phase | `show` prints the CLI's own error after `preflight:`. The user updates the CLI or changes the model in the config; then `resume`, which probes again |
+| `coordinator_failed` | the coordinator itself crashed | `show` prints the traceback tail; `resume --detach` retries the phase; when it crashes again, report the traceback and stop |
 | `workspace_dirty`, `unexpected_commit`, `workspace_foreign` | the worktree changed outside the coordinator | report the path; never clean it yourself |
 | `scripts_changed` | the PR or a fix touched a registered script, or a file the configured agent CLI runs at startup (`opencode.json`, `.opencode/`, or `.agents/` hooks, MCP config, plugins or custom agents) | the user reads the diff and decides |
 | `read_only_violated` | an agent changed the worktree, or left it unreadable to git, during a read-only phase | report the path; the change is left for the user to inspect or discard; never clean it yourself |
@@ -168,9 +187,10 @@ have told the user the id.
 | `inspect_only` | the dry run finished its read-only phases | read `pass-N/review.md` and the assessment output. Do not `resume`: a dry run pauses again at once, since it can never fix or push |
 | `manual` | someone ran `pause` | `resume` when the user says so |
 
-A run that lost its process mid-phase (a closed session, a killed shell) shows a working state such
-as `reviewing` with nothing running. `resume` refuses it. Run `pause <run-id>` then `resume
-<run-id>`; the lock is released when the process died.
+A run that lost its coordinator (a closed session, a killed shell, a reboot) shows its working
+state with `(no coordinator)` in `status` and `show`. `resume <run-id> --detach` continues it from
+that phase; no `pause` is needed. Every phase can be re-entered: an interrupted fix that left the
+worktree dirty pauses as `workspace_dirty` for the user to look at.
 
 **Success criteria**: after `resume`, the run prints a new transition line, or you have reported
 the exact reason and what the user must do.
@@ -244,6 +264,8 @@ unless the user said "all of them".
 - "I will clean the worktree so it can continue." The dirty state is evidence. Show the path.
 - "Ten minutes passed with no output, something is stuck." A review phase is allowed forty. Wait
   for the notification.
+- "This session is ending, so the run is lost." A detached run keeps going. Note the run id; the
+  next session runs `status` and `wait`.
 - "I will flip `post_reviews` to false so it stops posting." Mode is `--inspect-only` at start.
   Publication switches change only when the user asks.
 
