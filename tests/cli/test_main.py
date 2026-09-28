@@ -109,3 +109,68 @@ def test_main_claims_the_claude_login_before_any_command_runs(settings, monkeypa
     assert main(["status"], container=box) == 0
 
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ
+
+
+def test_status_and_show_say_when_no_coordinator_is_driving_an_enrolled_run(settings, capsys):
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    capsys.readouterr()
+
+    assert main(["status"], container=box) == 0
+    assert "preparing (no coordinator)" in capsys.readouterr().out
+    assert main(["show", run_id], container=box) == 0
+    assert "no coordinator; resume continues from this phase" in capsys.readouterr().out
+
+
+def test_status_does_not_call_a_run_unattended_while_a_coordinator_holds_its_lock(settings, capsys):
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    capsys.readouterr()
+    lock = RunLock(settings.state_dir, "webapp", 1004)
+    lock.acquire()
+    try:
+        assert main(["status"], container=box) == 0
+    finally:
+        lock.release()
+
+    assert "no coordinator" not in capsys.readouterr().out
+
+
+def test_resume_continues_an_unattended_run_in_place(settings, capsys):
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    capsys.readouterr()
+
+    assert main(["resume", run_id, "--no-run"], container=box) == 0
+
+    assert f"resumed {run_id} at preparing" in capsys.readouterr().out
+
+
+def test_wait_exits_one_naming_the_missing_coordinator_for_an_unattended_run(settings, capsys):
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    capsys.readouterr()
+
+    assert main(["wait", run_id, "--interval", "0"], container=box) == 1
+
+    assert f"run {run_id}: preparing (no coordinator)" in capsys.readouterr().out
+
+
+def test_wait_exits_zero_for_a_complete_run_and_two_for_an_unknown_one(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.COMPLETE
+    runs_repo.save_run(box.conn, run)
+    capsys.readouterr()
+
+    assert main(["wait", run.id, "--interval", "0"], container=box) == 0
+    assert f"run {run.id}: complete" in capsys.readouterr().out
+    assert main(["wait", "nope", "--interval", "0"], container=box) == 2

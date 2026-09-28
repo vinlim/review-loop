@@ -7,7 +7,7 @@ import sqlite3
 from review_loop.repositories import runs as runs_repo
 from review_loop.types.protocols import Clock
 from review_loop.types.result import Err, Ok, Result
-from review_loop.types.run import PauseReason, Run, RunState
+from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
 
 
 def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock) -> Run:
@@ -18,8 +18,11 @@ def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock)
     return _save(conn, run, clock)
 
 
-def resume(conn: sqlite3.Connection, run: Run, clock: Clock) -> Result[Run, str]:
-    """A moved head cannot be resumed where it stopped: the run goes back through preparation to adopt it."""
+def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = False) -> Result[Run, str]:
+    """A moved head cannot be resumed where it stopped: the run goes back through preparation to adopt it. A run in a
+    working state that no coordinator drives (`unattended`) continues from that state; every phase can be re-entered."""
+    if unattended and run.state in WORKING_STATES:
+        return Ok(_save(conn, run, clock))
     if run.state != RunState.PAUSED or run.resume_state is None:
         return Err(f"run {run.id} is {run.state.value}, not paused")
     run.state = RunState.PREPARING if run.pause_reason == PauseReason.HEAD_CHANGED else run.resume_state

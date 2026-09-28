@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from review_loop.cli.container import Container, build_container, claim_claude_oauth_token, default_home
@@ -13,8 +14,9 @@ from review_loop.cli.render import render_show, render_status
 from review_loop.config.settings import ConfigError
 from review_loop.repositories import runs as runs_repo
 from review_loop.services import run_control
+from review_loop.services.locks import RunLock
 from review_loop.services.start import StartRefusal, requested_mode, start_run
-from review_loop.types.run import PauseReason
+from review_loop.types.run import WORKING_STATES, PauseReason
 
 
 def main(argv: list[str] | None = None, container: Container | None = None) -> int:
@@ -64,6 +66,10 @@ def _add_run_commands(commands) -> None:
     start.set_defaults(handler=command_start)
     status = commands.add_parser("status", help="list runs")
     status.set_defaults(handler=command_status)
+    wait = commands.add_parser("wait", help="follow a run another process drives until it stops")
+    wait.add_argument("run_id")
+    wait.add_argument("--interval", type=float, default=3.0, help="seconds between polls")
+    wait.set_defaults(handler=command_wait)
     show = commands.add_parser("show", help="show one run")
     show.add_argument("run_id")
     show.set_defaults(handler=command_show)
@@ -168,7 +174,8 @@ def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspe
 
 
 def command_status(args, box: Container) -> int:
-    print(render_status(runs_repo.list_runs(box.conn)))
+    runs = runs_repo.list_runs(box.conn)
+    print(render_status(runs, unattended={run.id for run in runs if _unattended(box, run)}))
     return 0
 
 
@@ -179,8 +186,29 @@ def command_show(args, box: Container) -> int:
     from review_loop.repositories import findings as findings_repo
 
     repo = box.settings.repositories.get(run.repo)
-    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None))
+    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None,
+                      unattended=_unattended(box, run)))
     return 0
+
+
+def command_wait(args, box: Container) -> int:
+    from review_loop.services.wait import wait_for_run
+
+    run = _require_run(box, args.run_id)
+    if run is None:
+        return 2
+    final = wait_for_run(box.conn, run.id, lock_held=lambda current: _lock(box, current).is_held(), sleep=time.sleep,
+                         on_step=_print_transition, interval_seconds=args.interval)
+    return _report_final(box, final)
+
+
+def _lock(box: Container, run) -> RunLock:
+    return RunLock(box.settings.state_dir, run.repo, run.pr_number)
+
+
+def _unattended(box: Container, run) -> bool:
+    """A run a coordinator should be driving, with no coordinator holding its lock."""
+    return run.state in WORKING_STATES and not _lock(box, run).is_held()
 
 
 def command_pause(args, box: Container) -> int:
@@ -196,9 +224,10 @@ def command_resume(args, box: Container) -> int:
     run = _require_run(box, args.run_id)
     if run is None:
         return 2
-    result = run_control.resume(box.conn, run, box.clock)
+    result = run_control.resume(box.conn, run, box.clock, unattended=_unattended(box, run))
     if not result.ok:
-        print(result.error, file=sys.stderr)
+        driven = f"; a coordinator holds its lock, follow it with `review-loop wait {run.id}`" if run.state in WORKING_STATES else ""
+        print(result.error + driven, file=sys.stderr)
         return 2
     print(f"resumed {run.id} at {result.value.state.value}")
     if getattr(args, "no_run", False):
@@ -233,7 +262,14 @@ def _drive(box: Container, run, lock=None) -> int:
     finally:
         if owned:
             lock.release()
+    return _report_final(box, final)
+
+
+def _report_final(box: Container, final) -> int:
+    """The closing line of a drive or a wait: the state the run is in, and 0 only for a complete run."""
     state = final.state.value + (f" ({final.pause_reason.value})" if final.pause_reason else "")
+    if _unattended(box, final):
+        state += " (no coordinator)"
     outcome = f", outcome {final.outcome.value}" if final.outcome else ""
     print(f"run {final.id}: {state}{outcome}; artifacts under {box.settings.state_dir / 'runs' / final.id}")
     return 0 if final.state.value in ("complete",) else 1

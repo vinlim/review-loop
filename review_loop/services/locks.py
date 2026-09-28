@@ -25,6 +25,19 @@ class RunLock:
             raise AlreadyLocked(f"another coordinator holds {self.path}") from None
         self._handle = handle
 
+    def is_held(self) -> bool:
+        """Whether some process holds this lock. A separate handle is used so the probe conflicts with any holder, this
+        process included, and it is released at once; a PR that never had a coordinator gets no lock file."""
+        if not self.path.exists():
+            return False
+        with open(self.path, "a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
     def release(self) -> None:
         if self._handle is None:
             return

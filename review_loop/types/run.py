@@ -19,6 +19,10 @@ class RunState(StrEnum):
     CANCELLED = "cancelled"
 
 
+# States a coordinator process drives; the rest wait for a person, or are over.
+WORKING_STATES = frozenset(state for state in RunState if state not in (RunState.PAUSED, RunState.COMPLETE, RunState.FAILED, RunState.CANCELLED))
+
+
 class PauseReason(StrEnum):
     USAGE_LIMIT = "usage_limit"
     AUTH_REQUIRED = "auth_required"

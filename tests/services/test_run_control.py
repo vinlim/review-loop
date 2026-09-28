@@ -66,3 +66,24 @@ def test_a_run_paused_for_inspection_before_modes_existed_stays_inspect_only():
         inspect_only = False
 
     assert inspect_only(NotInspecting(), run) is True
+
+
+def test_resume_continues_an_unattended_run_from_the_phase_its_coordinator_left():
+    conn, run = make(RunState.VERIFYING)
+
+    resumed = resume(conn, run, FakeClock(), unattended=True)
+
+    assert resumed.ok and resumed.value.state == RunState.VERIFYING
+    assert runs_repo.get_run(conn, run.id).state == RunState.VERIFYING
+
+
+def test_resume_without_the_unattended_signal_still_refuses_a_run_that_is_not_paused():
+    conn, run = make(RunState.VERIFYING)
+
+    assert not resume(conn, run, FakeClock(), unattended=False).ok
+
+
+def test_a_finished_run_is_never_resumed_even_when_nothing_holds_its_lock():
+    conn, run = make(RunState.COMPLETE)
+
+    assert not resume(conn, run, FakeClock(), unattended=True).ok

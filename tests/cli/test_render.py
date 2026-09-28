@@ -60,3 +60,20 @@ def test_show_keeps_prepare_details_out_of_a_run_that_moved_past_preparation():
     text = render_show(run(extra={"prepare_log": "/state/runs/r/prepare-2.log", "prepare_failure": "stale tail"}), findings=[])
 
     assert "prepare log" not in text and "stale tail" not in text
+
+
+def test_status_marks_a_run_in_a_working_state_that_no_coordinator_is_driving():
+    driven, dropped = run(), run(RunState.VERIFYING)
+    dropped.id = "webapp-1005-20260927-100000"
+
+    text = render_status([driven, dropped], unattended={dropped.id})
+
+    lines = {line.split()[0]: line for line in text.splitlines() if "webapp-100" in line}
+    assert "reviewing" in lines[driven.id] and "no coordinator" not in lines[driven.id]
+    assert "verifying (no coordinator)" in lines[dropped.id]
+
+
+def test_show_says_when_no_coordinator_is_driving_the_run_and_that_resume_continues_it():
+    text = render_show(run(RunState.VERIFYING), findings=[], unattended=True)
+
+    assert "state: verifying (no coordinator; resume continues from this phase)" in text
