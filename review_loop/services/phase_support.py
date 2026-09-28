@@ -317,7 +317,9 @@ def check_pull_before_effect(deps: Deps, run: Run) -> Run | None:
 def head_moved(deps: Deps, run: Run) -> bool:
     """Whether the PR branch points somewhere other than the last head this run put or found there. Git is asked, never
     the API: GitHub can answer from before a push git already confirmed, whether the run's own or someone else's."""
-    return deps.git.remote_branch_head(run.worktree_path, repo(deps, run).remote, run.head_ref) != remote_head(run)
+    repository = repo(deps, run)
+    cwd = run.worktree_path or str(repository.local_path)  # ls-remote needs a directory, not the worktree in particular
+    return deps.git.remote_branch_head(cwd, repository.remote, run.head_ref) != remote_head(run)
 
 
 class transaction:

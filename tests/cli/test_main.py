@@ -205,3 +205,37 @@ def test_stop_refuses_a_complete_run_naming_its_state(settings, capsys):
 
     assert "is complete" in capsys.readouterr().err
     assert runs_repo.get_run(box.conn, run.id).state == RunState.COMPLETE
+
+
+def test_resume_after_a_head_changed_pause_continues_where_it_paused_when_git_shows_the_head_did_not_move(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.PUBLISHING
+    runs_repo.save_run(box.conn, run)
+    run_control.pause(box.conn, run, PauseReason.HEAD_CHANGED, box.clock)
+    box.git.remote_heads[run.head_ref] = run.extra["remote_head"]  # git: the branch still points where the run left it
+    capsys.readouterr()
+
+    assert main(["resume", run.id, "--no-run"], container=box) == 0
+
+    assert f"resumed {run.id} at publishing" in capsys.readouterr().out
+
+
+def test_resume_after_a_head_changed_pause_goes_back_through_preparation_when_git_shows_a_move(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.PUBLISHING
+    runs_repo.save_run(box.conn, run)
+    run_control.pause(box.conn, run, PauseReason.HEAD_CHANGED, box.clock)
+    box.git.remote_heads[run.head_ref] = "9" * 40
+    capsys.readouterr()
+
+    assert main(["resume", run.id, "--no-run"], container=box) == 0
+
+    assert f"resumed {run.id} at preparing" in capsys.readouterr().out
