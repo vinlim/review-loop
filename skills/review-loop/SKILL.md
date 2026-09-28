@@ -72,15 +72,17 @@ table it wrote and name anything it left empty, especially `verification.require
 required check, a fix can never be verified. Do not edit the config yourself to fill gaps; tell the
 user what to add.
 
-A required check runs as an ordinary subprocess in the tool's worktree, with the environment the
-coordinator gives agents: the known token variables removed (GitHub, OpenAI, Anthropic, AWS, and
-anything named like a secret, password or API key; the Claude Code OAuth token stays), git
+A required check runs as an ordinary subprocess in the tool's worktree, in the sanitised
+environment the coordinator builds for every project command and agent: the known token variables
+removed (GitHub, OpenAI, Anthropic, AWS, and anything named like a secret, password or API key), git
 credential helpers cleared at every level including the repository's own config, `gh`
 configuration emptied, and `origin` pushes blocked for every repository the process touches,
-including temporary ones a test creates. Network access is not blocked and other variables pass
-through. So register only a check that is safe to run against code the PR
-controls, and expect a suite that pushes, even to a local remote, to fail there although it passes
-in a shell.
+including temporary ones a test creates. The Claude Code login, `CLAUDE_CODE_OAUTH_TOKEN`, is
+removed as well: the coordinator takes it out of its own environment at startup and adds it back
+only to the Claude agent's process, so no check, prepare command or other agent receives it.
+Network access is not blocked and other variables pass through. So register only a check that is
+safe to run against code the PR controls, and expect a suite that pushes, even to a local remote,
+to fail there although it passes in a shell.
 
 **Success criteria**: every `doctor` line starts with `ok`. A `FAIL` line names its own fix. Auth
 fixes (`codex login`, `gh auth login`, running `claude` once) are the user's to perform; report
@@ -157,7 +159,7 @@ have told the user the id.
 | `usage_limit` | an agent CLI hit its quota | tell the user; `resume` after the window they name |
 | `auth_required` | an agent or `gh` login expired | the user renews it in the CLI's own flow; then `resume` |
 | `checks_failed` | required checks failed twice, or could not run | show the verification log path; the user decides |
-| `prepare_failed` | a registered prepare command exited non-zero | its output is not kept; list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose; then `resume` |
+| `prepare_failed` | a registered prepare command exited non-zero | `show <run-id>` prints the prepare log's path, `<state_dir>/runs/<run-id>/prepare-<n>.log` (one per attempt), and its last lines; read the whole log when the tail does not show which command failed, and report the command and its error. If the log does not explain the failure, list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose. `resume` once the cause is fixed |
 | `agent_failed` | no usable output after bounded retries | show the attempt directory; `resume` once; then report |
 | `workspace_dirty`, `unexpected_commit`, `workspace_foreign` | the worktree changed outside the coordinator | report the path; never clean it yourself |
 | `scripts_changed` | the PR or a fix touched a registered script | the user reads the diff and decides |
