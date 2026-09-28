@@ -362,7 +362,7 @@ clean review is scoped to a commit and a discussion state.
 The final report is built from the run's records, never written by a model, so every id, commit and
 count in it is one the tool recorded. It opens with an overview (passes, elapsed time, how the findings
 ended, commits made, the last checks), then gives each finding's outcome, every exception with both
-positions, the findings closed without a fix with the author's and reviewer's own words in quotes, the
+positions, the findings closed without a verified fix with the author's and reviewer's own words in quotes, the
 run pass by pass, and each fix commit with its title and files read back from git. It is saved as
 `report.md` and posted once as a PR comment. GitHub caps a comment at 65,536 characters, so a longer
 report is posted cut at a line with the path of the full file.

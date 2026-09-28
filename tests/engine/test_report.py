@@ -101,7 +101,7 @@ def test_the_findings_table_says_how_each_finding_ended():
 
 
 def test_a_finding_closed_without_a_fix_carries_the_authors_reason_and_the_reviewers_answer():
-    section = three_pass_run().split("## Closed without a fix")[1].split("\n## ")[0]
+    section = three_pass_run().split("## Closed without a verified fix")[1].split("\n## ")[0]
 
     assert "**R1-F3** [CHORE] Rename the helper." in section
     assert 'The author declined: "The name follows the framework convention."' in section
@@ -145,7 +145,7 @@ def test_withdrawn_answered_and_kept_by_decision_findings_say_why():
 
     text = render_report(a_run(pass_no=2), findings, events, decisions, [], [], exhausted=False)
 
-    section = text.split("## Closed without a fix")[1].split("\n## ")[0]
+    section = text.split("## Closed without a verified fix")[1].split("\n## ")[0]
     assert 'The reviewer withdrew it in pass 2: "The guard runs first."' in section
     assert 'Answered in pass 1: "Yes, on purpose."' in section
     assert "Kept as is by decision v1 (arbitration): keep: both arbiters kept it" in section
@@ -158,7 +158,7 @@ def test_a_run_with_nothing_to_report_says_so_plainly():
     overview = text.split("## Findings")[0]
     assert "The loop ran 1 pass in 45m." in overview
     assert "The reviewer raised no findings. The loop made no commits. No checks ran." in overview
-    assert "## Closed without a fix" not in text and "## Commits" not in text and "## Adjacent findings" not in text
+    assert "## Closed without a verified fix" not in text and "## Commits" not in text and "## Adjacent findings" not in text
     assert "\n\n\n" not in text
 
 
@@ -192,3 +192,28 @@ def test_findings_that_all_ended_the_same_way_are_counted_once():
 
     assert "The reviewer raised 1 finding: left as an exception." in one
     assert "The reviewer raised 2 findings: all fixed and verified." in two
+
+
+def test_a_finding_withdrawn_after_its_fix_names_the_fix_commit_so_the_report_never_contradicts_itself():
+    finding = a_finding("R1-F1", "withdrawn")
+    events = {"R1-F1": fixed_then_verified(1, 1, C1, 2)[:3] + [
+        event("reviewer", "fixed_pending_verification", "withdrawn", resolution="withdrawn", note="The guard already ran first.", **{"pass": 2})]}
+
+    text = render_report(a_run(pass_no=2), [finding], events, [], [], [], exhausted=False)
+
+    assert "| R1-F1 | ISSUE | pass 1 | fixed in 111111111, withdrawn in pass 2 | A title |" in text
+    section = text.split("## Closed without a verified fix")[1].split("\n## ")[0]
+    assert 'Commit `111111111` fixed it in pass 1. The reviewer withdrew it in pass 2: "The guard already ran first."' in section
+    assert "## Closed without a fix" not in text
+
+
+def test_commits_git_could_not_describe_leave_the_file_count_out_or_qualify_it():
+    unread = {"sha": C1, "pass_no": 1, "title": "", "files": None, "pushed": True}
+    read = {"sha": C2, "pass_no": 2, "title": "fix: y", "files": ["a.php", "b.php"], "pushed": True}
+
+    alone = render_report(a_run(pass_no=1), [], {}, [], [], [], exhausted=False, commits=[unread])
+    mixed = render_report(a_run(pass_no=2), [], {}, [], [], [], exhausted=False, commits=[unread, read])
+
+    assert "The loop pushed 1 commit. " in alone and "touching" not in alone
+    assert "- `111111111` (title unavailable) (pass 1)\n" in alone
+    assert "The loop pushed 2 commits touching at least 2 files." in mixed

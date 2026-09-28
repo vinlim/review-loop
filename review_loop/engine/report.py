@@ -16,7 +16,7 @@ NEXT_STEP = {Outcome.COMPLETE: "Mark the PR ready to run hosted CI; merge as usu
              Outcome.COMPLETE_WITH_EXCEPTIONS: "Read the exceptions above, then mark the PR ready to run hosted CI.",
              Outcome.BLOCKED: "Resolve the open blockers above, then mark the PR ready for hosted CI."}
 MAX_FILES_PER_COMMIT = 10
-CLOSED_WITHOUT_FIX = (FindingState.REJECTION_ACCEPTED, FindingState.WITHDRAWN, FindingState.ANSWERED)
+CLOSED_UNVERIFIED = (FindingState.REJECTION_ACCEPTED, FindingState.WITHDRAWN, FindingState.ANSWERED)
 OVERVIEW_COUNTS = ((FindingState.VERIFIED, "fixed and verified", "fixed and verified"),
                    (FindingState.REJECTION_ACCEPTED, "rejection accepted", "rejections accepted"),
                    (FindingState.WITHDRAWN, "withdrawn", "withdrawn"),
@@ -51,9 +51,9 @@ def render_report(run: Run, findings: list[Finding], events: dict[str, list[dict
         lines += ["", "## Exceptions and open items", ""]
         for finding in attention:
             lines += _render_positions(finding, events.get(finding.id, []), decisions)
-    closed = [f for f in findings if f.state in CLOSED_WITHOUT_FIX]
+    closed = [f for f in findings if f.state in CLOSED_UNVERIFIED]
     if closed:
-        lines += ["", "## Closed without a fix", ""] + [_closing(f, events.get(f.id, []), decisions) for f in closed]
+        lines += ["", "## Closed without a verified fix", ""] + [_closing(f, events.get(f.id, []), decisions) for f in closed]
     if run.pass_no:
         lines += ["", "## Pass by pass", ""] + [_pass_line(run, n, findings, events, verification) for n in range(1, run.pass_no + 1)]
     if commits:
@@ -97,9 +97,12 @@ def _overview(run: Run, findings: list[Finding], verification: list[dict], commi
     else:
         sentences.append("The reviewer raised no findings.")
     if commits:
-        files = {path for commit in commits for path in commit["files"]}
+        files = {path for commit in commits for path in commit["files"] or []}
+        unread = any(commit["files"] is None for commit in commits)
         unpushed = sum(1 for commit in commits if not commit["pushed"])
-        made = f"{_count(len(commits), 'commit', 'commits')} touching {_count(len(files), 'file', 'files')}"
+        made = _count(len(commits), "commit", "commits")
+        if files:
+            made += f" touching {'at least ' if unread else ''}{_count(len(files), 'file', 'files')}"
         sentences.append(f"The loop pushed {made}." if not unpushed
                          else f"The loop made {made}; {unpushed} {'was' if unpushed == 1 else 'were'} not pushed.")
     else:
@@ -117,15 +120,16 @@ def _outcome(finding: Finding, events: list[dict], decisions: list[dict]) -> str
     closing = _closing_event(events, state)
     in_pass = f" in pass {closing['note']['pass']}" if closing and closing["note"].get("pass") else ""
     decision = _decision_for(finding.id, decisions)
+    commit, _ = _fix(events)
+    fixed = f"fixed in {commit[:9]}, " if commit else ""
     if state == FindingState.VERIFIED:
-        commit = next((e["note"]["commit"] for e in reversed(events) if e["note"].get("commit")), "")
-        return (f"fixed in {commit[:9]}, " if commit else "") + f"verified{in_pass}"
+        return f"{fixed}verified{in_pass}"
     if state == FindingState.REJECTION_ACCEPTED:
         if closing and closing["actor"] == "coordinator" and decision:
-            return f"kept by decision v{decision['version']}"
-        return f"rejection accepted{in_pass}"
+            return f"{fixed}kept by decision v{decision['version']}"
+        return f"{fixed}rejection accepted{in_pass}"
     if state in (FindingState.WITHDRAWN, FindingState.ANSWERED):
-        return f"{state.value}{in_pass}"
+        return f"{fixed}{state.value}{in_pass}"
     if state == FindingState.DEFERRED_BY_DECISION:
         return f"exception by decision v{decision['version']}" if decision else "left as an exception"
     return UNFINISHED.get(state, state.value.replace("_", " "))
@@ -137,6 +141,9 @@ def _closing(finding: Finding, events: list[dict], decisions: list[dict]) -> str
     note = closing["note"] if closing else {}
     in_pass = f" in pass {note['pass']}" if note.get("pass") else ""
     parts = [f"- **{finding.id}** [{finding.severity}] {_sentence(finding.title)}"]
+    commit, fix_pass = _fix(events)
+    if commit:
+        parts.append(f"Commit `{commit[:9]}` fixed it in pass {fix_pass}.")
     if state == FindingState.REJECTION_ACCEPTED:
         reply = next((e["note"]["reply"] for e in reversed(events)
                       if e["actor"] == "author" and e["note"].get("disposition") in ("reject", "unfixed") and e["note"].get("reply")), "")
@@ -186,7 +193,7 @@ def _pass_line(run: Run, n: int, findings: list[Finding], events: dict[str, list
 
 
 def _commit_line(commit: dict) -> str:
-    files = commit["files"]
+    files = commit["files"] or []
     shown, more = files[:MAX_FILES_PER_COMMIT], len(files) - MAX_FILES_PER_COMMIT
     listing = ", ".join(shown) + (f" and {more} more" if more > 0 else "")
     where = f"pass {commit['pass_no']}" + ("" if commit["pushed"] else ", not pushed")
@@ -214,6 +221,12 @@ def _render_positions(finding: Finding, events: list[dict], decisions: list[dict
 
 def _closing_event(events: list[dict], state: FindingState) -> dict | None:
     return next((e for e in reversed(events) if e["to_state"] == state and e.get("from_state") != state), None)
+
+
+def _fix(events: list[dict]) -> tuple[str, int | None]:
+    """The last fix commit recorded for a finding and its pass; a finding can close another way after one."""
+    note = next((e["note"] for e in reversed(events) if e["note"].get("commit")), {})
+    return note.get("commit", ""), note.get("pass")
 
 
 def _decision_for(finding_id: str, decisions: list[dict]) -> dict | None:

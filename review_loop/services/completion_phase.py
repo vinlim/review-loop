@@ -66,7 +66,7 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
 
 def _loop_commits(deps: Deps, run: Run, events: dict[str, list[dict]]) -> list[dict]:
     """Each fix commit read back from git, so the report shows what was committed rather than what was planned.
-    A commit git cannot describe still appears, without its title and files."""
+    A commit git cannot describe still appears, with no title and files None, meaning unknown."""
     fixes = [event["note"] for items in events.values() for event in items if event["note"].get("commit")]
     commits = []
     for pass_no in range(1, run.pass_no + 1):
@@ -75,9 +75,9 @@ def _loop_commits(deps: Deps, run: Run, events: dict[str, list[dict]]) -> list[d
             continue
         try:
             parent, message = deps.git.commit_info(run.worktree_path, sha)
-            files = deps.git.changed_files(run.worktree_path, parent, sha) if parent else []
+            files = deps.git.changed_files(run.worktree_path, parent, sha) if parent else None
         except RuntimeError:
-            message, files = "", []
+            message, files = "", None
         pushed = any(note["commit"] == sha and note.get("pushed", True) for note in fixes)
         commits.append({"sha": sha, "pass_no": pass_no, "title": message.strip().splitlines()[0] if message.strip() else "",
                         "files": files, "pushed": pushed})

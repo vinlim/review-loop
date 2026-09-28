@@ -394,7 +394,9 @@ def test_the_final_report_is_written_even_when_git_cannot_describe_a_commit(sett
     run = run_to_completion(h)
 
     assert run.state == RunState.COMPLETE
-    assert f"- `{run.head_sha[:9]}` (title unavailable) (pass 1)" in (tmp_path / "runs" / run.id / "report.md").read_text()
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    assert f"- `{run.head_sha[:9]}` (title unavailable) (pass 1)" in report
+    assert "The loop pushed 1 commit. " in report
 
 
 def test_a_final_report_longer_than_a_github_comment_is_posted_cut_and_kept_whole_on_disk(settings, tmp_path, monkeypatch):
