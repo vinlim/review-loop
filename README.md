@@ -51,6 +51,19 @@ The developer's own git configuration is never touched. Everything posted to Git
 commit message passes through the attribution filter; the author's desktop session is forked, never
 appended to.
 
+## Agent skill
+
+`skills/review-loop/SKILL.md` teaches a coding agent (Claude Code, or anything that reads agent
+skills) to operate this tool: start and inspect runs, act on each pause reason, read the report,
+and work the inbox, without doing the review or the fixes itself. Install it for yourself by
+copying or linking the directory into your skills folder:
+
+```bash
+ln -s "$PWD/skills/review-loop" ~/.claude/skills/review-loop
+```
+
+Then ask the agent to run review-loop on a PR URL, check a run, or open the inbox.
+
 ## Verify
 
 ```bash
