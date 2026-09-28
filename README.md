@@ -39,7 +39,8 @@ review-loop backup | restore <archive>
 ```
 
 Inspect-only is a property of the run, fixed at `start`: a dry run can never be resumed into a fix or a
-push. To run the same PR for real, `stop` it and `start` again (the worktree is reused). The three
+push. To run the same PR for real, `stop` it and `start` again (the worktree is reused); until then a
+`start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
 are honoured at the point of each effect.
 
@@ -55,6 +56,19 @@ Agents run with no tokens, no credential helpers (`GIT_CONFIG_GLOBAL` empty, `GI
 The developer's own git configuration is never touched. Everything posted to GitHub and every
 commit message passes through the attribution filter; the author's desktop session is forked, never
 appended to.
+
+## Agent skill
+
+`skills/review-loop/SKILL.md` teaches a coding agent (Claude Code, or anything that reads agent
+skills) to operate this tool: start and inspect runs, act on each pause reason, read the report,
+and work the inbox, without doing the review or the fixes itself. Install it for yourself by
+copying or linking the directory into your skills folder:
+
+```bash
+ln -s "$PWD/skills/review-loop" ~/.claude/skills/review-loop
+```
+
+Then ask the agent to run review-loop on a PR URL, check a run, or open the inbox.
 
 ## Verify
 
