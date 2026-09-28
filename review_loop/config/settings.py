@@ -145,7 +145,7 @@ def _agent_defaults(reader: _Reader, review: dict[str, Any], prefix: str) -> dic
     """Model and effort default to the chosen agent's own, so switching agents never inherits another CLI's model."""
     defaults = {}
     for role in ("reviewer", "author"):
-        name = review.get(role, getattr(ReviewConfig, role))
+        name = reader.string(review, role, prefix, default=getattr(ReviewConfig, role))
         if name not in AGENT_PROFILES:
             raise reader._fail(role, prefix, f"must be one of {', '.join(sorted(AGENT_PROFILES))}")
         profile = AGENT_PROFILES[name]
@@ -163,8 +163,8 @@ class _Reader:
         dotted = f"{prefix}.{key}" if prefix else key
         return ConfigError(f"{self.path}: {dotted} {problem}")
 
-    def string(self, table: dict[str, Any], key: str, prefix: str = "") -> str:
-        value = table.get(key)
+    def string(self, table: dict[str, Any], key: str, prefix: str = "", default: str | None = None) -> str:
+        value = table.get(key, default)
         if value is None:
             raise self._fail(key, prefix, "is required")
         if not isinstance(value, str):

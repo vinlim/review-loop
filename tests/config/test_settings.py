@@ -88,3 +88,13 @@ def test_an_unknown_agent_is_rejected_naming_the_key_and_the_known_agents(tmp_pa
 
     assert "repositories.webapp.review.author" in str(raised.value)
     assert "agy, claude, codex, opencode" in str(raised.value)
+
+
+@pytest.mark.parametrize("value", ['["codex"]', '{ name = "claude" }'])
+def test_an_agent_given_as_an_array_or_table_is_rejected_naming_the_key(tmp_path, value):
+    path = write(tmp_path, MINIMAL + f"\n[repositories.webapp.review]\nauthor = {value}\n")
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert "repositories.webapp.review.author must be a string" in str(raised.value)
