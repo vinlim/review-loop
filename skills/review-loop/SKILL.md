@@ -80,23 +80,23 @@ them and stop.
 
 Mode is fixed at start and cannot be changed later. `start` reuses any active run for the PR
 with the mode that run already has, whatever flags you pass, and `show` does not print the mode.
-So before promising anything, enrol without driving:
+So decide the requested mode first, then enrol without driving, with the flags for that mode:
+
+- Words like "dry run", "inspect", "just look", "don't post", "what would it say" mean
+  inspection. Nothing is posted or pushed.
+- Anything else means publication: the loop posts reviews and replies and pushes verified fixes
+  to the PR branch under the user's GitHub account. Say so in your first line.
 
 ```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run --inspect-only
+review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run                  # publication
+review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run --inspect-only   # inspection
 ```
 
-The one output line reads `run <id> (<state>, publish|inspect) for <url>`. That is the mode the
-run will use.
-
-- Words like "dry run", "inspect", "just look", "don't post", "what would it say": the user wants
-  inspection. If the line says `inspect`, continue with `--inspect-only`. Nothing is posted or
-  pushed. If it says `publish`, an earlier publishing run exists; report its id and do not drive
-  it. The user must `stop` it before an inspect-only run can be created; then repeat the probe.
-- Otherwise run the full loop. If the probe says `inspect`, an earlier dry run exists and will be
-  reused as a dry run; report that and let the user `stop` it first if they want publication.
-  Say in your first line that the loop will post reviews and replies and push verified fixes to
-  the PR branch under the user's GitHub account.
+The one output line reads `run <id> (<state>, publish|inspect) for <url>`. With no active run it
+names the run just enrolled, in the requested mode. If the printed mode matches the request,
+drive it: the same command without `--no-run`. If it differs, an earlier run in the other mode
+exists and would be reused as is; report its id, do not drive it, and let the user `stop` it
+before repeating the probe.
 
 `start` streams one line per phase transition and runs for tens of minutes to hours: phase
 timeouts are 40 minutes for review and 60 for a fix or a verification, and a run allows up to
@@ -104,7 +104,7 @@ seven passes. Bash calls cap at ten minutes, so start it in the background and l
 notification bring you back:
 
 ```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n>              # add --inspect-only for a dry run
+review-loop start https://github.com/<owner>/<repo>/pull/<n>                  # or with --inspect-only, as probed
 ```
 
 Run that with `run_in_background: true`. Tell the user the run id from the first output line and

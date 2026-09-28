@@ -26,10 +26,12 @@ def test_explicit_operations_route_before_bare_identifiers(skill):
     assert control < cascade.index("bare PR URL")
 
 
-def test_inspect_only_probes_for_an_existing_run(skill):
+def test_the_probe_carries_the_requested_mode(skill):
     starting = section(skill, "## 4. Starting a run")
-    assert "--no-run --inspect-only" in starting
-    assert starting.index("--no-run --inspect-only") < starting.index("\"dry run\"")
+    lines = [line.split("#")[0] for line in starting.splitlines() if "review-loop start" in line]
+    assert any(line.rstrip().endswith("--no-run") for line in lines), "a publishing probe enrols in publish mode"
+    assert any(line.rstrip().endswith("--no-run --inspect-only") for line in lines), "an inspection probe enrols inspect-only"
+    assert starting.index("\"dry run\"") < starting.index("--no-run"), "the requested mode is decided before any probe"
 
 
 def test_align_recipe_checks_state_before_resume(skill):
