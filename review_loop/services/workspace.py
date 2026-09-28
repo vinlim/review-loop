@@ -99,4 +99,3 @@ def registered_script_files(repo: RepositoryConfig) -> set[str]:
     for extra in repo.workspace.prepare_when_paths_match.values():
         commands.extend(extra)
     return {argument for command in commands for argument in command[:2] if "/" in argument}
-

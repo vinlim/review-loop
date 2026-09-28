@@ -185,4 +185,3 @@ def test_the_shims_directory_holds_the_empty_git_and_gh_configuration_the_enviro
     shims = ensure_shims(tmp_path / "state")
 
     assert (shims / "empty-gitconfig").exists() and (shims / "empty-gh-config").is_dir()
-

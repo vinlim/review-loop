@@ -38,6 +38,26 @@ def test_the_import_roots_the_project_declares_to_pytest_lead_pythonpath_too(tmp
     assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path / "lib"), str(tmp_path / "tests/helpers"), str(tmp_path), "/extra"])
 
 
+UNREADABLE = {
+    "pythonpath neither text nor a list": ("pyproject.toml", "[tool.pytest.ini_options]\npythonpath = 5\n"),
+    "ini_options not a table": ("pyproject.toml", "[tool.pytest]\nini_options = 5\n"),
+    "pytest.toml root not a table": ("pytest.toml", "pytest = 5\n"),
+    "unbalanced quote": ("pytest.ini", '[pytest]\npythonpath = "lib\n'),
+    "not UTF-8": ("pyproject.toml", b'[tool.pytest.ini_options]\npythonpath = ["\xff"]\n'),
+}
+
+
+@pytest.mark.parametrize("config_file, config_text", UNREADABLE.values(), ids=UNREADABLE.keys())
+def test_a_pytest_config_the_parser_cannot_read_leaves_the_worktree_on_the_path_for_pytest_to_judge(tmp_path, config_file, config_text):
+    path = tmp_path / config_file
+    path.write_bytes(config_text) if isinstance(config_text, bytes) else path.write_text(config_text)
+
+    env = pytest_check_env(PYTEST, str(tmp_path), {"PYTHONPATH": "/extra"})
+
+    assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path), "/extra"])
+    assert pytest_check_command("python", tmp_path, pytest_options(tmp_path) or {}) == ["python", "-m", "pytest", "-q"]
+
+
 def test_a_src_directory_the_config_already_declares_is_not_listed_twice(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = src\n")

@@ -1,5 +1,9 @@
 """A registered pytest check: what a project declares to pytest, where its imports come from, and the environment
-the check runs in so that every process it starts imports the worktree rather than an installed copy of the project."""
+the check runs in so that every process it starts imports the worktree rather than an installed copy of the project.
+
+The config comes from the reviewed worktree, so the parser never raises: a value it cannot read declares nothing and a
+file it cannot read configures nothing. pytest reads the same files when the check runs and is the judge of them;
+it accepts some shapes this parser does not, and reports the rest in the verification log."""
 
 from __future__ import annotations
 
@@ -59,12 +63,14 @@ def _options_in(path: Path) -> dict | None:
     if path.name in ("pytest.ini", ".pytest.ini"):
         return _ini_section(path, "pytest") or {}
     if path.name in ("pytest.toml", ".pytest.toml"):
-        return _toml(path).get("pytest", {})
+        return _table(_toml(path).get("pytest")) or {}
     if path.name == "pyproject.toml":
-        table = _toml(path).get("tool", {}).get("pytest")
-        if not isinstance(table, dict):
+        tool = _table(_toml(path).get("tool")) or {}
+        table = _table(tool.get("pytest"))
+        if table is None:
             return None
-        return {**{key: value for key, value in table.items() if key != "ini_options"}, **table.get("ini_options", {})}
+        ini_options = _table(table.get("ini_options")) or {}
+        return {**{key: value for key, value in table.items() if key != "ini_options"}, **ini_options}
     return _ini_section(path, "tool:pytest" if path.name == "setup.cfg" else "pytest")
 
 
@@ -72,7 +78,7 @@ def _ini_section(path: Path, section: str) -> dict | None:
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path)
-    except configparser.Error:
+    except (configparser.Error, UnicodeError):
         return None
     return dict(parser[section]) if parser.has_section(section) else None
 
@@ -80,10 +86,21 @@ def _ini_section(path: Path, section: str) -> dict | None:
 def _toml(path: Path) -> dict:
     try:
         return tomllib.loads(path.read_text())
-    except tomllib.TOMLDecodeError:
+    except (tomllib.TOMLDecodeError, UnicodeError):
         return {}
 
 
+def _table(value) -> dict | None:
+    return value if isinstance(value, dict) else None
+
+
 def _paths(value) -> list[str]:
-    """As pytest reads a `paths` option: shell quoting for a string, a list as given."""
-    return shlex.split(value) if isinstance(value, str) else [str(entry) for entry in value]
+    """As pytest reads a `paths` option: shell quoting for a string, a list as given, nothing for anything else."""
+    if isinstance(value, list):
+        return [str(entry) for entry in value]
+    if not isinstance(value, str):
+        return []
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return []

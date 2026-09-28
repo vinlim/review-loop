@@ -44,4 +44,3 @@ def test_a_credential_helper_in_the_repository_config_answers_nobody_in_the_sani
     guarded = subprocess.run(["git", "credential", "fill"], cwd=repo, input=ask, capture_output=True, text=True, env=env)
 
     assert "hunter2" not in guarded.stdout and "hunter2" not in guarded.stderr
-
