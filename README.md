@@ -82,8 +82,10 @@ author = "claude"
 | `agy` | `--json-schema` | `--sandbox` restricts the terminal; file writes are not blocked | not resumed |
 | `opencode` | schema in the prompt, validated after | a tool-owned agent with edits and most commands denied | only with `--author-session`, forked |
 
-Whatever the agent, every read-only phase ends with a check that HEAD and the working tree did not
-change, and the run pauses with `read_only_violated` if they did. The check sees only the worktree, so
+Whatever the agent, every read-only phase ends with a check that nothing it may only read has changed:
+HEAD, every file git reports as changed or untracked, and every file in the pass directory the agent is
+given to read, each compared by content, mode and symlink target. The run pauses with
+`read_only_violated` if anything did. Ignored files (dependencies, build output) are not compared, so
 the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
 them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
 
