@@ -85,4 +85,5 @@ def _toml(path: Path) -> dict:
 
 
 def _paths(value) -> list[str]:
-    return value.split() if isinstance(value, str) else [str(entry) for entry in value]
+    """As pytest reads a `paths` option: shell quoting for a string, a list as given."""
+    return shlex.split(value) if isinstance(value, str) else [str(entry) for entry in value]
