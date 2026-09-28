@@ -34,7 +34,8 @@ review-loop backup | restore <archive>
 ```
 
 Inspect-only is a property of the run, fixed at `start`: a dry run can never be resumed into a fix or a
-push. To run the same PR for real, `stop` it and `start` again (the worktree is reused). The three
+push. To run the same PR for real, `stop` it and `start` again (the worktree is reused); until then a
+`start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
 are honoured at the point of each effect.
 

@@ -52,3 +52,16 @@ def test_a_refused_start_explains_why_and_exits_non_zero(settings, capsys):
 
     assert main(["start", URL, "--no-run"], container=box) == 2
     assert "author_not_allowed" in capsys.readouterr().err
+
+
+def test_a_start_in_the_other_mode_is_refused_and_names_the_run_to_stop(settings, capsys):
+    box = container(settings)
+    assert main(["start", URL, "--no-run", "--inspect-only"], container=box) == 0
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    capsys.readouterr()
+
+    assert main(["start", URL, "--no-run"], container=box) == 2
+
+    err = capsys.readouterr().err
+    assert "mode_conflict" in err and run_id in err and "is inspect" in err and "stop it" in err
+    assert [run.id for run in runs_repo.list_runs(box.conn)] == [run_id]

@@ -26,12 +26,23 @@ def test_explicit_operations_route_before_bare_identifiers(skill):
     assert control < cascade.index("bare PR URL")
 
 
-def test_the_probe_carries_the_requested_mode(skill):
+def test_start_carries_the_requested_mode_and_never_probes(skill):
     starting = section(skill, "## 4. Starting a run")
-    lines = [line.split("#")[0] for line in starting.splitlines() if "review-loop start" in line]
-    assert any(line.rstrip().endswith("--no-run") for line in lines), "a publishing probe enrols in publish mode"
-    assert any(line.rstrip().endswith("--no-run --inspect-only") for line in lines), "an inspection probe enrols inspect-only"
-    assert starting.index("\"dry run\"") < starting.index("--no-run"), "the requested mode is decided before any probe"
+    assert "--no-run" not in starting, "a separate probe is not a safety boundary; start refuses a mode conflict itself"
+    assert starting.index("\"dry run\"") < starting.index("review-loop start"), "the requested mode is decided before the command"
+    assert "mode_conflict" in starting
+
+
+def test_exit_code_zero_covers_a_blocked_outcome(skill):
+    row = next(line for line in skill.splitlines() if line.startswith("| 0 |"))
+    assert "blocked" in row
+    row = next(line for line in skill.splitlines() if line.startswith("| 1 |"))
+    assert "blocked" not in row
+
+
+def test_inspect_only_pause_row_forbids_resume(skill):
+    row = next(line for line in skill.splitlines() if line.startswith("| `inspect_only`"))
+    assert "Do not `resume`" in row
 
 
 def test_align_recipe_checks_state_before_resume(skill):

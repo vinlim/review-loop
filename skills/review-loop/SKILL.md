@@ -72,10 +72,14 @@ table it wrote and name anything it left empty, especially `verification.require
 required check, a fix can never be verified. Do not edit the config yourself to fill gaps; tell the
 user what to add.
 
-A required check runs inside the coordinator's sandbox: no credentials, and git pushes disabled for
-every repository the process touches, including temporary ones a test creates. A suite that pushes
-or reaches the network fails there even though it passes in a shell. Name a check that stays local,
-or exclude the tests that do not.
+A required check runs as an ordinary subprocess in the tool's worktree, with the environment the
+coordinator gives agents: the known token variables removed (GitHub, OpenAI, Anthropic, AWS, and
+anything named like a secret, password or API key; the Claude Code OAuth token stays), git
+credential helpers and `gh` configuration emptied, and `origin` pushes blocked for every repository
+the process touches, including temporary ones a test creates. Network access is not blocked and
+other variables pass through. So register only a check that is safe to run against code the PR
+controls, and expect a suite that pushes, even to a local remote, to fail there although it passes
+in a shell.
 
 **Success criteria**: every `doctor` line starts with `ok`. A `FAIL` line names its own fix. Auth
 fixes (`codex login`, `gh auth login`, running `claude` once) are the user's to perform; report
@@ -83,28 +87,16 @@ them and stop.
 
 ## 4. Starting a run
 
-Mode is fixed at start and cannot be changed later. `start` reuses any active run for the PR
-with the mode that run already has, whatever flags you pass, and `show` does not print the mode.
-So decide the requested mode first, then enrol without driving, with the flags for that mode:
+Mode is fixed at start and cannot be changed later. Decide it from the request:
 
 - Words like "dry run", "inspect", "just look", "don't post", "what would it say" mean
-  inspection. Nothing is posted or pushed.
+  inspection: add `--inspect-only`. Nothing is posted or pushed.
 - Anything else means publication: the loop posts reviews and replies and pushes verified fixes
   to the PR branch under the user's GitHub account. Say so in your first line.
 
-```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run                  # publication
-review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run --inspect-only   # inspection
-```
-
-The one output line reads `run <id> (<state>, publish|inspect) for <url>`. With no active run it
-names the run just enrolled, as `preparing`, in the requested mode. Read both fields:
-
-- Mode differs from the request: an earlier run in the other mode exists and would be reused as
-  is. Report its id, do not drive it, and let the user `stop` it before repeating the probe.
-- Mode matches and the state is `paused`: `start` would exit at once without doing anything, since
-  the loop treats a paused run as stopped. Go to Paused runs and use `resume`.
-- Mode matches and the state is anything else: drive it, the same command without `--no-run`.
+`start` reuses the active run for the PR when there is one, and refuses with `mode_conflict` when
+that run's mode differs from the flags you pass. It never switches a run's mode, so the one
+command with the requested flags is both the check and the start.
 
 `start` streams one line per phase transition and runs for tens of minutes to hours: phase
 timeouts are 40 minutes for review and 60 for a fix or a verification, and a run allows up to
@@ -112,26 +104,30 @@ seven passes. Bash calls cap at ten minutes, so start it in the background and l
 notification bring you back:
 
 ```bash
-review-loop start https://github.com/<owner>/<repo>/pull/<n>                  # or with --inspect-only, as probed
+review-loop start https://github.com/<owner>/<repo>/pull/<n>                  # add --inspect-only for a dry run
 ```
 
-Run that with `run_in_background: true`. Tell the user the run id from the first output line and
-that the run continues while the session is open.
+Run that with `run_in_background: true`. The first output line reads
+`run <id> (<state>, publish|inspect) for <url>`. Tell the user the run id and that the run continues
+while the session is open. A reused run that is `paused` exits at once with code 1 and its pause
+reason, because the loop treats a paused run as stopped: go to Paused runs.
 
 Exit codes:
 
 | Code | Meaning | What to do |
 |---|---|---|
-| 0 | complete | read `report.md`, report |
-| 1 | paused, failed, cancelled or blocked | `show <run-id>`, then the pause table or the report |
+| 0 | complete, including outcome `blocked` | read `report.md`; its headline says which |
+| 1 | paused, failed or cancelled | `show <run-id>`, then the pause table, or report the terminal state |
 | 2 | refused | the stderr line says why; see refusals below |
 | 3 | another coordinator holds the lock | a run for this PR is already going; `status`, do not start another |
 
 Refusals: `repository_not_registered` (Onboarding); `author_not_allowed` (the PR author is not in
-`allowed_pr_authors`; only the user may widen that list); `pull_not_open`; `fork_not_supported`.
+`allowed_pr_authors`; only the user may widen that list); `pull_not_open`; `fork_not_supported`;
+`mode_conflict` (an active run for this PR is in the other mode, and the line names it: report the
+run, let the user `stop` it, and only then start again with the requested flags).
 
-**Success criteria**: the first output line reads `run <id> (preparing, publish|inspect) for
-<url>` and you have told the user the id.
+**Success criteria**: the first output line names a run whose mode is the one requested, and you
+have told the user the id.
 
 ## 5. While it runs
 
@@ -162,7 +158,7 @@ Refusals: `repository_not_registered` (Onboarding); `author_not_allowed` (the PR
 | `workspace_dirty`, `unexpected_commit`, `workspace_foreign` | the worktree changed outside the coordinator | report the path; never clean it yourself |
 | `scripts_changed` | the PR or a fix touched a registered script | the user reads the diff and decides |
 | `push_failed`, `github_error` | the remote did not confirm | `resume` once; if it repeats, report |
-| `inspect_only` | the dry run finished its read-only phases | read `pass-N/review.md` and the assessment output; it cannot resume into a fix |
+| `inspect_only` | the dry run finished its read-only phases | read `pass-N/review.md` and the assessment output. Do not `resume`: a dry run pauses again at once, since it can never fix or push |
 | `manual` | someone ran `pause` | `resume` when the user says so |
 
 A run that lost its process mid-phase (a closed session, a killed shell) shows a working state such

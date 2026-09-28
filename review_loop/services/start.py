@@ -1,4 +1,4 @@
-"""Enrol a pull request: one active run per PR, only for registered repositories and allowed authors."""
+"""Enrol a pull request: one active run per PR, in one mode, only for registered repositories and allowed authors."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ class StartRefusal(StrEnum):
     AUTHOR_NOT_ALLOWED = "author_not_allowed"
     PULL_NOT_OPEN = "pull_not_open"
     FORK_NOT_SUPPORTED = "fork_not_supported"
+    MODE_CONFLICT = "mode_conflict"
 
 
 def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github: GitHubGateway, git: GitClient,
@@ -29,6 +30,9 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
         return Err(StartRefusal.REPOSITORY_NOT_REGISTERED)
     active = runs_repo.find_active_run(conn, repo.name, ref.number)
     if active is not None:
+        # A run's mode is fixed at enrolment; a start with the other flag must never drive it as is.
+        if active.extra.get("mode", "publish") != requested_mode(inspect_only):
+            return Err(StartRefusal.MODE_CONFLICT)
         return Ok(active)
     pull = github.fetch_pull(ref)
     if pull.author not in repo.allowed_pr_authors:
@@ -47,10 +51,14 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
         state=RunState.PREPARING,
         budgets=Budgets(repo.review.max_review_passes, repo.review.max_fix_attempts, repo.review.max_alignment_exchanges),
         versions=dict(versions), author_session=author_session, created_at=now.isoformat(), updated_at=now.isoformat(),
-        extra={"mode": "inspect" if inspect_only else "publish", "remote_head": pull.head_sha},
+        extra={"mode": requested_mode(inspect_only), "remote_head": pull.head_sha},
     )
     runs_repo.create_run(conn, run)
     return Ok(run)
+
+
+def requested_mode(inspect_only: bool) -> str:
+    return "inspect" if inspect_only else "publish"
 
 
 def find_repository(settings: Settings, ref: PullRef) -> RepositoryConfig | None:
