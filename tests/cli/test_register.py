@@ -59,14 +59,34 @@ def test_registration_prefers_the_project_venv_interpreter_when_it_exists(tmp_pa
     assert tomllib.loads(text)["repositories"]["tool"]["verification"]["required"] == [[str(repo / ".venv" / "bin" / "python"), "-m", "pytest", "-q"]]
 
 
-def test_registration_detects_pytest_in_setup_cfg_but_not_a_pyproject_without_it(tmp_path):
+def required(repo, tmp_path):
+    return tomllib.loads(registration_toml("tool", repo, "r", tmp_path / "wt", "v"))["repositories"]["tool"]["verification"]["required"]
+
+
+def test_registration_reads_every_file_pytest_reads_and_only_the_sections_pytest_reads(tmp_path):
     repo = project(tmp_path, with_scripts=False)
     (repo / "pyproject.toml").write_text('[project]\nname = "tool"\n')
-    assert tomllib.loads(registration_toml("tool", repo, "r", tmp_path / "wt", "v"))["repositories"]["tool"]["verification"]["required"] == []
+    (repo / "tox.ini").write_text("[tox]\nenvlist = py\n")
+    assert required(repo, tmp_path) == []
 
-    (repo / "setup.cfg").write_text("[tool:pytest]\ntestpaths = tests\n")
+    for filename, text in (("tox.ini", "[pytest]\ntestpaths = tests\n"), ("setup.cfg", "[tool:pytest]\ntestpaths = tests\n"),
+                           (".pytest.ini", ""), ("pytest.toml", ""), ("pyproject.toml", '[tool.pytest]\ntestpaths = ["tests"]\n')):
+        (repo / filename).write_text(text)
+        assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q"]], filename
+        (repo / filename).unlink()
 
-    assert tomllib.loads(registration_toml("tool", repo, "r", tmp_path / "wt", "v"))["repositories"]["tool"]["verification"]["required"] != []
+
+def test_registration_puts_a_src_layout_on_the_path_unless_the_project_already_does(tmp_path):
+    repo = project(tmp_path, with_scripts=False)
+    (repo / "src" / "tool").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q", "-o", "pythonpath=src"]]
+
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["tests"]\n')
+    assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q", "-o", "pythonpath=src tests"]]
+
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["src", "tests"]\n')
+    assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q"]]
 
 
 def test_the_project_test_runner_wins_over_pytest_detection(tmp_path):

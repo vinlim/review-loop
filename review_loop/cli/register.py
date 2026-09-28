@@ -11,6 +11,7 @@ from pathlib import Path
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
 from review_loop.types.agents import AGENT_PROFILES
 
+PYTEST_CONFIG_FILES = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
 LARAVEL_SANITIZED_ENV = ["DB_*", "DB_URL", "CACHE_STORE", "SESSION_DRIVER", "QUEUE_CONNECTION", "BROADCAST_CONNECTION", "MAIL_MAILER"]
 
 
@@ -68,28 +69,64 @@ def _required_checks(local_path: Path, has_runner: bool) -> list[list[str]]:
     """The project's own runner wins; a Python project that configures pytest gets pytest."""
     if has_runner:
         return [[".claude/run-tests.sh", "changed"]]
-    if _configures_pytest(local_path):
-        return [[_python_interpreter(local_path), "-m", "pytest", "-q"]]
-    return []
+    options = _pytest_options(local_path)
+    if options is None:
+        return []
+    return [_pytest_command(local_path, options)]
 
 
-def _configures_pytest(local_path: Path) -> bool:
-    if (local_path / "pytest.ini").exists():
-        return True
-    pyproject = local_path / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            data = tomllib.loads(pyproject.read_text())
-        except tomllib.TOMLDecodeError:
-            data = {}
-        if "ini_options" in data.get("tool", {}).get("pytest", {}):
-            return True
-    setup_cfg = local_path / "setup.cfg"
-    if setup_cfg.exists():
-        parser = configparser.ConfigParser()
-        parser.read(setup_cfg)
-        return parser.has_section("tool:pytest")
-    return False
+def _pytest_command(local_path: Path, options: dict) -> list[str]:
+    """`python -m pytest` puts the worktree it runs in ahead of the interpreter's installed copy of the project on
+    sys.path, so a flat layout is tested as checked out; a src layout needs src put there too."""
+    command = [_python_interpreter(local_path), "-m", "pytest", "-q"]
+    configured = _paths(options.get("pythonpath", []))
+    if (local_path / "src").is_dir() and "src" not in configured:
+        command += ["-o", "pythonpath=" + " ".join(["src", *configured])]
+    return command
+
+
+def _pytest_options(local_path: Path) -> dict | None:
+    """The options of the first file pytest itself would read, in its order; None when none configures pytest."""
+    for name in PYTEST_CONFIG_FILES:
+        path = local_path / name
+        if path.exists():
+            options = _pytest_options_in(path)
+            if options is not None:
+                return options
+    return None
+
+
+def _pytest_options_in(path: Path) -> dict | None:
+    if path.name in ("pytest.ini", ".pytest.ini"):
+        return _ini_section(path, "pytest") or {}
+    if path.name in ("pytest.toml", ".pytest.toml"):
+        return _toml(path).get("pytest", {})
+    if path.name == "pyproject.toml":
+        table = _toml(path).get("tool", {}).get("pytest")
+        if not table:
+            return None
+        return {**{key: value for key, value in table.items() if key != "ini_options"}, **table.get("ini_options", {})}
+    return _ini_section(path, "tool:pytest" if path.name == "setup.cfg" else "pytest")
+
+
+def _ini_section(path: Path, section: str) -> dict | None:
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path)
+    except configparser.Error:
+        return None
+    return dict(parser[section]) if parser.has_section(section) else None
+
+
+def _toml(path: Path) -> dict:
+    try:
+        return tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
+def _paths(value) -> list[str]:
+    return value.split() if isinstance(value, str) else [str(entry) for entry in value]
 
 
 def _python_interpreter(local_path: Path) -> str:
