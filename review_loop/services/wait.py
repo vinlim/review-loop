@@ -8,8 +8,8 @@ from typing import Callable
 from review_loop.repositories import runs as runs_repo
 from review_loop.types.run import WORKING_STATES, Run
 
-# A coordinator releases the lock only when it exits, but a freshly detached one may not hold it on the first poll.
-UNATTENDED_POLLS = 3
+# A coordinator releases the lock only when it exits, but a freshly detached one needs a few seconds to take it.
+UNATTENDED_POLLS = 5
 
 
 def wait_for_run(conn: sqlite3.Connection, run_id: str, *, lock_held: Callable[[Run], bool], sleep: Callable[[float], None],

@@ -33,6 +33,7 @@ def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | N
         *([f"agents in config now: {_agents(configured)}"] if configured and configured != run.agents else []),
         f"worktree: {run.worktree_path or 'not prepared'}",
         *_prepare_failure_lines(run),
+        *_coordinator_failure_lines(run),
         "",
     ]
     if not findings:
@@ -54,6 +55,13 @@ def _prepare_failure_lines(run: Run) -> list[str]:
         return []
     tail = run.extra["prepare_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
     return [f"prepare log: {run.extra.get('prepare_log', '')}", *("  " + line for line in tail)]
+
+
+def _coordinator_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.COORDINATOR_FAILED or not run.extra.get("coordinator_failure"):
+        return []
+    tail = run.extra["coordinator_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
+    return ["coordinator failure (resume retries the phase):", *("  " + line for line in tail)]
 
 
 def _state(run: Run) -> str:

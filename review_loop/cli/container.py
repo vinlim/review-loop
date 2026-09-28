@@ -11,7 +11,7 @@ from typing import Any
 
 from review_loop.adapters.git_cli import GitCli
 from review_loop.adapters.github_gh import GhGitHub
-from review_loop.adapters.process import SubprocessRunner
+from review_loop.adapters.process import SubprocessRunner, spawn_detached
 from review_loop.config.settings import Settings, load_settings
 from review_loop.repositories.db import connect, migrate
 from review_loop.services.state_dir import ensure_private_dir
@@ -36,6 +36,7 @@ class Container:
     versions: dict[str, str] = field(default_factory=dict)
     home: Path = Path.home() / ".review-loop"
     claude_oauth_token: str = ""  # the Claude adapter is its only holder; every other subprocess starts without it
+    spawn: Any = spawn_detached  # starts a detached coordinator; tests record the call instead
 
     @property
     def schemas_dir(self) -> Path:

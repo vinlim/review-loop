@@ -54,12 +54,12 @@ def test_wait_returns_when_the_run_pauses():
 def test_wait_tolerates_a_lock_that_is_briefly_free_but_returns_once_no_coordinator_comes_back():
     conn, run = make()
     polls = []
-    held = iter([False, True, False, False, False, False])
+    held = iter([False, True, False, False, False, False, False, False])
 
     final = wait_for_run(conn, run.id, lock_held=lambda run: next(held), sleep=lambda seconds: polls.append(seconds), on_step=lambda run: None)
 
     assert final.state == RunState.REVIEWING
-    assert len(polls) == 4, "three consecutive free polls end the wait; the single free poll before did not"
+    assert len(polls) == 6, "five consecutive free polls end the wait; the single free poll before did not"
 
 
 def test_wait_on_an_unknown_run_returns_nothing():

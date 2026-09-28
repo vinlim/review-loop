@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from review_loop.cli.container import Container, build_container, claim_claude_oauth_token, default_home
@@ -63,7 +65,11 @@ def _add_run_commands(commands) -> None:
     start.add_argument("--author-session", default="auto")
     start.add_argument("--no-run", action="store_true", help="enrol only; do not run phases")
     start.add_argument("--inspect-only", action="store_true", help="review and assess into files; publish nothing")
+    start.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
     start.set_defaults(handler=command_start)
+    drive = commands.add_parser("drive", help="drive an enrolled run in this process (what --detach starts)")
+    drive.add_argument("run_id")
+    drive.set_defaults(handler=command_drive)
     status = commands.add_parser("status", help="list runs")
     status.set_defaults(handler=command_status)
     wait = commands.add_parser("wait", help="follow a run another process drives until it stops")
@@ -78,6 +84,7 @@ def _add_run_commands(commands) -> None:
         sub.add_argument("run_id")
         if name == "resume":
             sub.add_argument("--no-run", action="store_true")
+            sub.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
         sub.set_defaults(handler=handler)
     align = commands.add_parser("align", help="optional override: settle disputed findings yourself")
     align.add_argument("run_id")
@@ -158,9 +165,33 @@ def command_start(args, box: Container) -> int:
         print(f"run {run.id} ({run.state.value}, {run.mode()}) for {run.pr_url}")
         if args.no_run:
             return 0
-        return _drive(box, run, lock=lock)
+        if not args.detach:
+            return _drive(box, run, lock=lock)
     finally:
         lock.release()
+    return _detach(box, run)
+
+
+def _detach(box: Container, run) -> int:
+    """A coordinator in its own session takes the run; the lock is free by now so the child can hold it. The claimed
+    Claude login travels only to that child, which claims it again for its own Claude adapter."""
+    log_path = box.settings.state_dir / "runs" / run.id / "coordinator.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, **({"CLAUDE_CODE_OAUTH_TOKEN": box.claude_oauth_token} if box.claude_oauth_token else {})}
+    pid = box.spawn([sys.executable, "-m", "review_loop.cli.main", "drive", run.id], cwd=str(box.home), env=env, log_path=log_path)
+    print(f"coordinator pid {pid} drives it in its own session; log: {log_path}; follow with: review-loop wait {run.id}")
+    return 0
+
+
+def command_drive(args, box: Container) -> int:
+    run = _require_run(box, args.run_id)
+    if run is None:
+        return 2
+    if run.state not in WORKING_STATES:
+        hint = f"; resume it with `review-loop resume {run.id}`" if run.state.value == "paused" else ""
+        print(f"run {run.id} is {run.state.value}, not in a working state{hint}", file=sys.stderr)
+        return 2
+    return _drive(box, run)
 
 
 def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspect_only: bool) -> str:
@@ -232,6 +263,8 @@ def command_resume(args, box: Container) -> int:
     print(f"resumed {run.id} at {result.value.state.value}")
     if getattr(args, "no_run", False):
         return 0
+    if getattr(args, "detach", False):
+        return _detach(box, result.value)
     return _drive(box, result.value)
 
 
@@ -259,10 +292,20 @@ def _drive(box: Container, run, lock=None) -> int:
             return 3
     try:
         final = run_loop(build_deps(box, inspect_only=run.mode() == "inspect"), run, on_step=_print_transition)
+    except Exception:  # noqa: BLE001 - a crash of any kind must leave a resumable, explained run behind
+        final = _pause_after_crash(box, run)
     finally:
         if owned:
             lock.release()
     return _report_final(box, final)
+
+
+def _pause_after_crash(box: Container, run):
+    """The run stays where its last persisted transition left it, paused with the traceback for show; resume retries that phase."""
+    traceback.print_exc(file=sys.stderr)
+    current = runs_repo.get_run(box.conn, run.id) or run
+    current.extra["coordinator_failure"] = traceback.format_exc()[-4000:]
+    return run_control.pause(box.conn, current, PauseReason.COORDINATOR_FAILED, box.clock)
 
 
 def _report_final(box: Container, final) -> int:
@@ -383,3 +426,7 @@ def command_inbox_status(args, box: Container) -> int:
     inbox_repo.set_status(box.conn, args.item_id, args.status, args.reference or args.reason, box.clock.now().isoformat())
     print(f"#{args.item_id} {args.status}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -38,6 +38,7 @@ class PauseReason(StrEnum):
     WORKSPACE_FOREIGN = "workspace_foreign"
     GITHUB_ERROR = "github_error"
     READ_ONLY_VIOLATED = "read_only_violated"
+    COORDINATOR_FAILED = "coordinator_failed"
     MANUAL = "manual"
 
 
