@@ -44,7 +44,7 @@ def real_checkout(local: Path, origin: Path) -> str:
 
 def test_prepare_fetches_adds_the_worktree_then_runs_the_prepare_command_in_a_guarded_environment(settings, tmp_path):
     log, git, process, repo = make(settings, tmp_path)
-    base_env = {"PATH": "/usr/bin", "GH_TOKEN": "secret", "DB_URL": "pgsql://x", "DB_HOST": "h", "HOME": "/h"}
+    base_env = {"PATH": "/usr/bin", "GH_TOKEN": "secret", "DB_URL": "pgsql://x", "DB_HOST": "h", "HOME": "/h", "CLAUDE_CODE_OAUTH_TOKEN": "t"}
 
     result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state",
                                base_env=base_env, changed_paths=["app/Foo.php"])
@@ -60,6 +60,7 @@ def test_prepare_fetches_adds_the_worktree_then_runs_the_prepare_command_in_a_gu
     env = prepare_call["env"]
     assert env["PATH"].startswith(str(tmp_path / "state" / "shims") + ":")
     assert "GH_TOKEN" not in env and "DB_URL" not in env and "DB_HOST" not in env and env["HOME"] == "/h"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
     assert env["GIT_CONFIG_KEY_0"] == "remote.origin.pushurl" and env["GIT_CONFIG_VALUE_0"] == "DISABLED"
     assert (tmp_path / "state" / "shims" / "gh").exists()
     assert result.value.path == expected_path and result.value.local_branch == "review-loop/pr-1004"

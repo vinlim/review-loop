@@ -77,7 +77,7 @@ def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: 
 
 def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: str, schema: str, output_dir: Path, policy: str,
              model: str, effort: str, resume: str = "") -> PhaseRequest:
-    env = sanitize_env(deps.base_env, repo.workspace.sanitize_env, str(ensure_shims(deps.settings.state_dir)))
+    env = sanitize_env(deps.base_env, repo.workspace.sanitize_env, str(ensure_shims(deps.settings.state_dir)), agent=True)
     return PhaseRequest(phase=phase, prompt=prompt, schema_path=str(deps.schemas_dir / f"{schema}.json"), cwd=run.worktree_path,
                         env=env, timeout_seconds=repo.review.timeouts_minutes.get(phase, 30) * 60, model=model, effort=effort,
                         output_dir=str(output_dir), tools_policy=policy, resume_session_id=resume, read_dirs=[str(Path(output_dir).parent)])
@@ -245,7 +245,7 @@ def apply_events(deps: Deps, run: Run, finding: Finding, events: tuple[str, ...]
     return False
 
 
-def agent_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
+def project_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
     return sanitize_env(deps.base_env, repo_config.workspace.sanitize_env, str(ensure_shims(deps.settings.state_dir)))
 
 
