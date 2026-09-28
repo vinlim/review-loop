@@ -1,0 +1,12 @@
+# The VPS shape: one long-lived container, the state directory mounted, auth from the environment.
+services:
+  review-loop:
+    build: .
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      GH_TOKEN: ${GH_TOKEN}
+    volumes:
+      - ./state:/state
+      - ./codex-auth:/root/.codex
+      - ./repositories:/repositories
+    command: ["status"]

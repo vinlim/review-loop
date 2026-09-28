@@ -1,0 +1,322 @@
+[
+  {
+    "id": 5298162087,
+    "node_id": "PRR_5298162087",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: MEDIUM\n\nThe logger now serialises plain objects, and one of them can carry a request URL with credentials.\nThe webhook formatter also truncates on characters rather than bytes. Two findings, both inline.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298162087",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T00:03:45Z",
+    "commit_id": "92672704d8ae8da4c8b63b01ce3fd2244e1a9de7"
+  },
+  {
+    "id": 5298396900,
+    "node_id": "PRR_5298396900",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298396900",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T00:39:55Z",
+    "commit_id": "c81d930515425353b56256d150b0fb64bcbe5093"
+  },
+  {
+    "id": 5298397163,
+    "node_id": "PRR_5298397163",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298397163",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T00:39:57Z",
+    "commit_id": "c81d930515425353b56256d150b0fb64bcbe5093"
+  },
+  {
+    "id": 5298493613,
+    "node_id": "PRR_5298493613",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: MEDIUM\n\nBoth first-pass findings are fixed. The new serialiser path follows `cause` without a depth limit,\nand the formatter decodes the payload twice. Two findings, both inline.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298493613",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T00:56:34Z",
+    "commit_id": "c81d930515425353b56256d150b0fb64bcbe5093"
+  },
+  {
+    "id": 5298756103,
+    "node_id": "PRR_5298756103",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298756103",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T01:45:54Z",
+    "commit_id": "c3eabbf76da074dc419e5bc156f55efba4b19afd"
+  },
+  {
+    "id": 5298756258,
+    "node_id": "PRR_5298756258",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5298756258",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T01:45:56Z",
+    "commit_id": "c3eabbf76da074dc419e5bc156f55efba4b19afd"
+  },
+  {
+    "id": 5300310323,
+    "node_id": "PRR_5300310323",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: MEDIUM\n\nThe depth limit holds. Two narrower problems remain: the formatter's size budget ignores the\nellipsis it appends, and the logger keeps a fragment when the URL has no path.\nVerified at the current head with the unit suites for both files.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300310323",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T05:49:12Z",
+    "commit_id": "c3eabbf76da074dc419e5bc156f55efba4b19afd"
+  },
+  {
+    "id": 5300378990,
+    "node_id": "PRR_5300378990",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300378990",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T05:58:15Z",
+    "commit_id": "a2c3c1971bda50667f9cda93abd6f512d96ea6b3"
+  },
+  {
+    "id": 5300379304,
+    "node_id": "PRR_5300379304",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300379304",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T05:58:17Z",
+    "commit_id": "a2c3c1971bda50667f9cda93abd6f512d96ea6b3"
+  },
+  {
+    "id": 5300427336,
+    "node_id": "PRR_5300427336",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: LOW\n\nBoth fixes hold. One remaining edge in the formatter: a payload exactly at the budget is\nreported as truncated. The logger is clean at this head.\nVerified with the formatter suite and a boundary reproduction.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300427336",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T06:04:04Z",
+    "commit_id": "a2c3c1971bda50667f9cda93abd6f512d96ea6b3"
+  },
+  {
+    "id": 5300477432,
+    "node_id": "PRR_5300477432",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300477432",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T06:10:53Z",
+    "commit_id": "32736e64e538a939daecef7415e8629bf467489d"
+  },
+  {
+    "id": 5300788003,
+    "node_id": "PRR_5300788003",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: MEDIUM\n\nThe formatter boundary is fixed. The new JsonNumbers helper collects every non-finite path\ninto one list, and a wide payload makes that list large enough to matter.\nVerified with a generated payload of 50,000 infinite values.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300788003",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T06:47:31Z",
+    "commit_id": "32736e64e538a939daecef7415e8629bf467489d"
+  },
+  {
+    "id": 5300940936,
+    "node_id": "PRR_5300940936",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300940936",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T07:04:20Z",
+    "commit_id": "5da3e71873c5613327edf545696e60bc5c9a88ac"
+  },
+  {
+    "id": 5300992794,
+    "node_id": "PRR_5300992794",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: REQUEST CHANGES\nRisk Profile: LOW\n\nThe count cap holds. The helper still reports a negative zero as non-finite,\nwhich the caller then rejects. One finding, inline.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5300992794",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T07:09:48Z",
+    "commit_id": "5da3e71873c5613327edf545696e60bc5c9a88ac"
+  },
+  {
+    "id": 5301187867,
+    "node_id": "PRR_5301187867",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5301187867",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T07:30:08Z",
+    "commit_id": "9f5419cf2f05f5f6fb8e79ac80e8a78de91dcce6"
+  },
+  {
+    "id": 5301476431,
+    "node_id": "PRR_5301476431",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "EXECUTIVE SUMMARY\n\nVerdict: APPROVE\nRisk Profile: LOW\n\nEvery finding from the six earlier passes is resolved at this head.\nRe-checked: logger redaction, serialiser depth, formatter budget and boundary, number collection.\nNo new findings. The remaining work in the description is out of scope for this PR.",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/acme/webapp/pull/984#pullrequestreview-5301476431",
+    "pull_request_url": "https://api.github.com/repos/acme/webapp/pulls/984",
+    "author_association": "OWNER",
+    "submitted_at": "2026-09-24T07:59:03Z",
+    "commit_id": "9f5419cf2f05f5f6fb8e79ac80e8a78de91dcce6"
+  }
+]

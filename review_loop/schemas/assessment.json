@@ -1,0 +1,107 @@
+{
+  "type": "object",
+  "properties": {
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "description": "Durable id from the packet"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "reject",
+              "needs_alignment",
+              "answer"
+            ],
+            "description": "Disposition"
+          },
+          "reply": {
+            "type": "string",
+            "description": "The reply to post in the finding's thread"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "For reject: code or requirement evidence; for accept: the defect confirmed; for answer: references"
+          },
+          "intended_fix": {
+            "type": "string",
+            "description": "For accept: the minimal fix, in scope; empty otherwise"
+          }
+        },
+        "required": [
+          "finding_id",
+          "disposition",
+          "reply",
+          "evidence",
+          "intended_fix"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Exactly one per active finding in the packet"
+    },
+    "adjacent_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "One line"
+          },
+          "description": {
+            "type": "string",
+            "description": "The problem"
+          },
+          "file": {
+            "type": "string",
+            "description": "Path or empty"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Symbol or empty"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "What shows it"
+          },
+          "impact": {
+            "type": "string",
+            "description": "Estimated impact, labelled as an estimate"
+          },
+          "next_step": {
+            "type": "string",
+            "description": "Suggested investigation or fix"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "file",
+          "symbol",
+          "evidence",
+          "impact",
+          "next_step"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Problems outside this PR's purpose; never fixed here"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Two or three sentences for the round summary"
+    }
+  },
+  "required": [
+    "dispositions",
+    "adjacent_findings",
+    "summary"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "assessment"
+}

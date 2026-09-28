@@ -1,0 +1,48 @@
+{
+  "verdict": "REQUEST_CHANGES",
+  "risk": "MEDIUM",
+  "summary": "Two boundary defects remain: URL redaction can keep a credential when a query holds an @, and non-finite path reporting has no byte budget. The formatter and serialiser changes are clean.",
+  "contract": {
+    "owns": "The described workstreams: logger redaction and serialisation, byte-safe webhook formatting, and non-finite number reporting.",
+    "does_not_own": "The deferred retry-queue changes and the pre-existing log shipping configuration."
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "ISSUE",
+      "file": "services/notifier/src/logger.ts",
+      "line": 26,
+      "symbol": "redactUrls",
+      "title": "Decide URL boundaries from the original string",
+      "finding": "For `https://host.test?email=a@b.test&token=SECRET` the userinfo pass removes everything up to the `@` in the query, taking the `?` with it, so the query pass finds nothing and `token=SECRET` is logged.",
+      "protected_behaviour": "Every logged URL loses its userinfo, query and fragment, including a URL with no path.",
+      "evidence": "logger.ts:26-27 runs two replacements in sequence on an already modified string. Reproduced with the unit harness.",
+      "recommendation": "Match each URL once and compute its boundaries from the original token. Redact the whole token when an @ appears after the authority.",
+      "proposed_refactor": "const redactUrls = (text: string): string =>\n    text.replace(/\\b[a-z][a-z0-9+.-]*:\\/\\/\\S+/gi, '[redacted URL]');",
+      "supersedes": "",
+      "new_evidence": ""
+    },
+    {
+      "id": "F2",
+      "severity": "ISSUE",
+      "file": "app/Support/JsonNumbers.php",
+      "line": 161,
+      "symbol": "JsonNumbers::collect",
+      "title": "Cap the total bytes of reported paths",
+      "finding": "The path count is capped at 20, but one path can be as long as the payload. Twenty non-finite values under a very long key produce a report many times the payload size.",
+      "protected_behaviour": "The report stays within a fixed byte budget whatever the shape of the payload.",
+      "evidence": "A generated 2 MB payload with one long key and twenty infinite values produced a 40 MB report.",
+      "recommendation": "Track the bytes of collected paths and stop at the budget, recording the remainder as a count.",
+      "proposed_refactor": "if ($bytes + strlen($path) > self::PATH_BUDGET) {\n    $omitted++;\n    continue;\n}",
+      "supersedes": "",
+      "new_evidence": ""
+    }
+  ],
+  "resolved_prior": [],
+  "questions": [],
+  "verification": [
+    "git diff --check: passed.",
+    "Logger unit suite: passed.",
+    "JsonNumbers unit suite: passed."
+  ]
+}

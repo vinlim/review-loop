@@ -1,0 +1,76 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 11597,
+  "duration_api_ms": 9753,
+  "ttft_ms": 8144,
+  "num_turns": 2,
+  "stop_reason": "tool_use",
+  "terminal_reason": "completed",
+  "session_id": "00000000-0000-4000-8000-00000000a551",
+  "total_cost_usd": 0.596055,
+  "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 58382,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 489,
+    "service_tier": "standard",
+    "speed": "standard"
+  },
+  "modelUsage": {
+    "claude-opus-5": {
+      "inputTokens": 2,
+      "outputTokens": 489,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 58382,
+      "costUSD": 0.596055,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 64000
+    }
+  },
+  "permission_denials": [],
+  "fast_mode_state": "off",
+  "result": "{\"dispositions\": [{\"finding_id\": \"R1-F1\", \"disposition\": \"accept\", \"reply\": \"Accepted. The query case reproduces as described: the userinfo pass stops at the first @, which here sits inside the query, so the query pass has nothing left to match. Fix: match each URL once, find the authority end from the original token, and redact the whole token when an @ appears after it.\", \"evidence\": \"logger.ts:26-27 applies two replacements in sequence; the reviewer's input reproduces the leak.\", \"intended_fix\": \"Single-pass redactUrls with boundaries from the original token; regression rows for an @ in the query and a password holding @.\"}, {\"finding_id\": \"R1-F2\", \"disposition\": \"accept\", \"reply\": \"Accepted. The count cap does not bound bytes, and a single key can be as long as the payload. Fix: keep a running byte total while collecting and stop at a fixed budget, counting what is omitted.\", \"evidence\": \"JsonNumbers.php:161 caps the number of paths but not their length.\", \"intended_fix\": \"Add a PATH_BUDGET constant, stop collecting at the budget, and report the omitted count; regression with one long key.\"}], \"adjacent_findings\": [{\"title\": \"Retry queue re-sends a webhook after a permanent 4xx\", \"description\": \"The retry job treats every non-2xx response as transient, so a 410 from a removed endpoint is retried until the attempt limit.\", \"file\": \"app/Jobs/DeliverWebhook.php\", \"symbol\": \"DeliverWebhook\", \"evidence\": \"PR description, known limits paragraph.\", \"impact\": \"Wasted deliveries and noisy logs for endpoints that will never accept the payload.\", \"next_step\": \"Classify 4xx other than 408 and 429 as permanent and stop retrying.\"}, {\"title\": \"Log shipping config still forwards the raw request line\", \"description\": \"The shipping config adds the raw request line as a separate field, so redaction in the logger does not cover it.\", \"file\": \"services/notifier/config/shipping.yml\", \"symbol\": \"request_line\", \"evidence\": \"shipping.yml maps request_line from the HTTP middleware, outside the logger's serialiser.\", \"impact\": \"A URL with credentials can still reach the log store through the shipped field.\", \"next_step\": \"Drop request_line from the shipped fields or route it through redactUrls.\"}], \"summary\": \"Both active findings are accepted with the fixes described. Two adjacent problems are filed for the inbox.\"}",
+  "structured_output": {
+    "dispositions": [
+      {
+        "finding_id": "R1-F1",
+        "disposition": "accept",
+        "reply": "Accepted. The query case reproduces as described: the userinfo pass stops at the first @, which here sits inside the query, so the query pass has nothing left to match. Fix: match each URL once, find the authority end from the original token, and redact the whole token when an @ appears after it.",
+        "evidence": "logger.ts:26-27 applies two replacements in sequence; the reviewer's input reproduces the leak.",
+        "intended_fix": "Single-pass redactUrls with boundaries from the original token; regression rows for an @ in the query and a password holding @."
+      },
+      {
+        "finding_id": "R1-F2",
+        "disposition": "accept",
+        "reply": "Accepted. The count cap does not bound bytes, and a single key can be as long as the payload. Fix: keep a running byte total while collecting and stop at a fixed budget, counting what is omitted.",
+        "evidence": "JsonNumbers.php:161 caps the number of paths but not their length.",
+        "intended_fix": "Add a PATH_BUDGET constant, stop collecting at the budget, and report the omitted count; regression with one long key."
+      }
+    ],
+    "adjacent_findings": [
+      {
+        "title": "Retry queue re-sends a webhook after a permanent 4xx",
+        "description": "The retry job treats every non-2xx response as transient, so a 410 from a removed endpoint is retried until the attempt limit.",
+        "file": "app/Jobs/DeliverWebhook.php",
+        "symbol": "DeliverWebhook",
+        "evidence": "PR description, known limits paragraph.",
+        "impact": "Wasted deliveries and noisy logs for endpoints that will never accept the payload.",
+        "next_step": "Classify 4xx other than 408 and 429 as permanent and stop retrying."
+      },
+      {
+        "title": "Log shipping config still forwards the raw request line",
+        "description": "The shipping config adds the raw request line as a separate field, so redaction in the logger does not cover it.",
+        "file": "services/notifier/config/shipping.yml",
+        "symbol": "request_line",
+        "evidence": "shipping.yml maps request_line from the HTTP middleware, outside the logger's serialiser.",
+        "impact": "A URL with credentials can still reach the log store through the shipped field.",
+        "next_step": "Drop request_line from the shipped fields or route it through redactUrls."
+      }
+    ],
+    "summary": "Both active findings are accepted with the fixes described. Two adjacent problems are filed for the inbox."
+  },
+  "uuid": "00000000-0000-4000-8000-000000000001"
+}

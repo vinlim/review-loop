@@ -1,0 +1,207 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "REQUEST_CHANGES",
+        "APPROVE",
+        "COMMENT"
+      ],
+      "description": "Verdict"
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "description": "Risk profile"
+    },
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences on the overall impact"
+    },
+    "contract": {
+      "type": "object",
+      "properties": {
+        "owns": {
+          "type": "string",
+          "description": "What this PR owns"
+        },
+        "does_not_own": {
+          "type": "string",
+          "description": "What it does not own"
+        }
+      },
+      "required": [
+        "owns",
+        "does_not_own"
+      ],
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Local id for a new finding, F1, F2, ...; the coordinator assigns the durable id"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "BLOCKER",
+              "ISSUE",
+              "CHORE",
+              "QUESTION"
+            ],
+            "description": "Severity"
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository-relative path; empty when the finding is not tied to a file"
+          },
+          "line": {
+            "type": "integer",
+            "description": "Line number on the head commit; 0 when not tied to a line"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Function, method or class the finding concerns; empty when none"
+          },
+          "title": {
+            "type": "string",
+            "description": "One line naming the concern"
+          },
+          "finding": {
+            "type": "string",
+            "description": "The flaw and the failure scenario or violated requirement"
+          },
+          "protected_behaviour": {
+            "type": "string",
+            "description": "The behaviour or contract that must hold"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "What in the code or tests shows the flaw; file:line references"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "What to change, in words"
+          },
+          "proposed_refactor": {
+            "type": "string",
+            "description": "Illustrative code; empty for CHORE and QUESTION"
+          },
+          "supersedes": {
+            "type": "string",
+            "description": "Durable id of a prior finding this one re-raises or narrows; empty for a new concern"
+          },
+          "new_evidence": {
+            "type": "string",
+            "description": "Required when re-raising a rejected finding: the new fact the rejection did not consider; empty otherwise"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "file",
+          "line",
+          "symbol",
+          "title",
+          "finding",
+          "protected_behaviour",
+          "evidence",
+          "recommendation",
+          "proposed_refactor",
+          "supersedes",
+          "new_evidence"
+        ],
+        "additionalProperties": false
+      },
+      "description": "New findings; one concern each"
+    },
+    "resolved_prior": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Durable id of a prior open finding"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "withdrawn",
+              "rejection_accepted",
+              "disputed"
+            ],
+            "description": "What the rereview concludes about it"
+          },
+          "note": {
+            "type": "string",
+            "description": "Why; for disputed, the new evidence"
+          }
+        },
+        "required": [
+          "id",
+          "resolution",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Every prior open finding gets exactly one entry in a rereview; empty on the first review"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Q1, Q2, ..."
+          },
+          "text": {
+            "type": "string",
+            "description": "The question"
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "True only when the answer decides an implementation or verification choice"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "blocking"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "A command you ran and what it showed"
+      }
+    }
+  },
+  "required": [
+    "verdict",
+    "risk",
+    "summary",
+    "contract",
+    "findings",
+    "resolved_prior",
+    "questions",
+    "verification"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "review"
+}

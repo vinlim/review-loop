@@ -1,0 +1,103 @@
+{
+  "type": "object",
+  "properties": {
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "description": "Durable id the change addresses"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Repository-relative path"
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "What changed and why it closes the finding"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Test added or changed, by path and name"
+            }
+          }
+        },
+        "required": [
+          "finding_id",
+          "files",
+          "description",
+          "tests"
+        ],
+        "additionalProperties": false
+      },
+      "description": "One entry per accepted finding you changed code for"
+    },
+    "not_changed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "description": "Durable id"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why no change was made"
+          }
+        },
+        "required": [
+          "finding_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "commit_title": {
+      "type": "string",
+      "description": "Commit title, imperative, under 72 characters"
+    },
+    "commit_body": {
+      "type": "string",
+      "description": "Commit body; no attribution trailers"
+    },
+    "tests_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command"
+          },
+          "result": {
+            "type": "string",
+            "description": "Outcome, one line"
+          }
+        },
+        "required": [
+          "command",
+          "result"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "changes",
+    "not_changed",
+    "commit_title",
+    "commit_body",
+    "tests_run"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "fix"
+}

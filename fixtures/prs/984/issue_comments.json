@@ -1,0 +1,116 @@
+[
+  {
+    "id": 5805354883,
+    "node_id": "IC_5805354883",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response (head c81d93051)\n\nBoth findings accepted and fixed: plain-object redaction in the logger and byte-safe truncation in the formatter.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T00:40:08Z",
+    "updated_at": "2026-09-24T00:40:08Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5805354883",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  },
+  {
+    "id": 5805977908,
+    "node_id": "IC_5805977908",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response, round 2 (head c3eabbf76)\n\nBoth findings accepted and fixed: cause depth and cycles in the logger, a single decode in the formatter.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T01:46:09Z",
+    "updated_at": "2026-09-24T01:46:09Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5805977908",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  },
+  {
+    "id": 5808572751,
+    "node_id": "IC_5808572751",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response, round 3 (head a2c3c1971)\n\nBoth findings accepted and fixed: the ellipsis now counts toward the budget, and pathless URLs lose their fragment.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T05:58:31Z",
+    "updated_at": "2026-09-24T05:58:31Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5808572751",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  },
+  {
+    "id": 5808725917,
+    "node_id": "IC_5808725917",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response, round 4 (head 32736e64e)\n\nThe boundary finding is accepted and fixed with a strict comparison.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T06:10:55Z",
+    "updated_at": "2026-09-24T06:10:55Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5808725917",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  },
+  {
+    "id": 5809416801,
+    "node_id": "IC_5809416801",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response, round 5 (head 5da3e7187)\n\nThe collection finding is accepted and fixed: paths are capped while collecting.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T07:04:22Z",
+    "updated_at": "2026-09-24T07:04:22Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5809416801",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  },
+  {
+    "id": 5809783410,
+    "node_id": "IC_5809783410",
+    "user": {
+      "login": "vinlim",
+      "id": 1000001,
+      "node_id": "U_kgDOAAAAAQ",
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/vinlim",
+      "url": "https://api.github.com/users/vinlim"
+    },
+    "body": "## Review response, round 6 (head 9f5419cf2)\n\nThe negative-zero question is answered and fixed: it is finite and now passes.\n\nChecks: the changed-file suites pass at this head.",
+    "created_at": "2026-09-24T07:30:21Z",
+    "updated_at": "2026-09-24T07:30:21Z",
+    "html_url": "https://github.com/acme/webapp/pull/984#issuecomment-5809783410",
+    "issue_url": "https://api.github.com/repos/acme/webapp/issues/984",
+    "author_association": "OWNER"
+  }
+]

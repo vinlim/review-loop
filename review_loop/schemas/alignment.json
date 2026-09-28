@@ -1,0 +1,66 @@
+{
+  "type": "object",
+  "properties": {
+    "oscillating": {
+      "type": "boolean",
+      "description": "Whether the thread shows oscillation"
+    },
+    "design_gap": {
+      "type": "boolean",
+      "description": "Whether the repetition points at a missing design element rather than a missed detail"
+    },
+    "contract": {
+      "type": "string",
+      "description": "What this PR owns and what it does not, as judged"
+    },
+    "invariant": {
+      "type": "string",
+      "description": "The behaviour at stake"
+    },
+    "conflicting_recommendations": {
+      "type": "string",
+      "description": "The positions in conflict"
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Evidence for each position"
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "A viable alternative"
+      }
+    },
+    "preferred_resolution": {
+      "type": "string",
+      "description": "The reviewer's preferred resolution and why"
+    },
+    "note": {
+      "type": "string",
+      "description": "The alignment note to post and to hand to the author"
+    },
+    "disputed_finding_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "Durable id"
+      }
+    }
+  },
+  "required": [
+    "oscillating",
+    "design_gap",
+    "contract",
+    "invariant",
+    "conflicting_recommendations",
+    "evidence",
+    "alternatives",
+    "preferred_resolution",
+    "note",
+    "disputed_finding_ids"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "alignment"
+}

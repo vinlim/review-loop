@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "neither"
+      ],
+      "description": "Which position better protects the stated behaviour within the contract"
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Why, tied to the evidence"
+    },
+    "residual": {
+      "type": "string",
+      "description": "What remains at risk under the chosen position"
+    }
+  },
+  "required": [
+    "decision",
+    "rationale",
+    "residual"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "arbitration"
+}

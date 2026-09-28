@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "review-loop"
+version = "0.1.0"
+description = "Drives a Codex reviewer and a Claude author through pull request review rounds"
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+review-loop = "review_loop.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["review_loop*"]
+
+[tool.setuptools.package-data]
+review_loop = ["prompts/*.md", "schemas/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: needs the real CLIs and network; opt-in"]
+addopts = "-m 'not live'"
