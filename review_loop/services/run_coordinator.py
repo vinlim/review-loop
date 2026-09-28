@@ -133,6 +133,9 @@ def phase_review(deps: Deps, run: Run) -> Run:
     review = outcome.value.data
     with transaction(deps.conn):
         _persist_review(deps, run, review, findings, pass_no, outcome.value.result_path, diff_text)
+    persisted = runs_repo.get_run(deps.conn, run.id)
+    if persisted is not None and externally_controlled(persisted):
+        return persisted  # the review is kept as a pending checkpoint; a resume publishes it without asking again
     return _publish_pending_review(deps, run)
 
 
@@ -153,7 +156,7 @@ def _persist_review(deps: Deps, run: Run, review: dict, findings: list[Finding],
     run.extra["pending_review_ids"] = ids
     run.extra["pending_review_diff"] = str(pass_dir(deps, run, pass_no) / "diff.patch")
     run.updated_at = now(deps)
-    runs_repo.save_run(deps.conn, run)
+    runs_repo.save_run_keeping_control(deps.conn, run)  # a pause or stop that landed during the review stands
 
 
 def _publish_pending_review(deps: Deps, run: Run) -> Run:

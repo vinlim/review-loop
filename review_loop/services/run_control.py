@@ -61,9 +61,3 @@ def stop(conn: sqlite3.Connection, run: Run, clock: Clock) -> Result[Run, Run]:
     finished run keeps its outcome: the error carries the run as it stands."""
     applied, current = runs_repo.cancel(conn, run.id, clock.now().isoformat())
     return Ok(current) if applied else Err(current)
-
-
-def _save(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:
-    run.updated_at = clock.now().isoformat()
-    runs_repo.save_run(conn, run)
-    return run

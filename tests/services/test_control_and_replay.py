@@ -254,3 +254,38 @@ def test_a_phase_pause_after_an_external_stop_keeps_the_stop(settings, tmp_path)
     final = step(h.deps, run)
 
     assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+
+
+# --- a pause or stop that lands during a review holds; the review is kept, not posted, and published on resume -------
+
+def test_a_manual_pause_during_the_review_holds_and_the_review_is_published_on_resume_without_asking_again(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+    h.reviewer.reply(REVIEW_984)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason, paused.resume_state) == (RunState.PAUSED, PauseReason.MANUAL, RunState.REVIEWING)
+    assert paused.pass_no == 1 and paused.extra["pending_review_pass"] == 1 and len(h.findings()) == 2
+    assert not [w for w in h.github.writes if w[0] == "post_review"], "nothing is posted under a pause"
+    h.reviewer.on_run = None
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.ASSESSING
+    assert len([w for w in h.github.writes if w[0] == "post_review"]) == 1 and len(h.reviewer.requests) == 1
+
+
+def test_a_stop_during_the_review_holds_and_keeps_the_review_as_a_record_without_posting_it(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+    h.reviewer.reply(REVIEW_984)
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+    assert runs_repo.get_run(h.conn, run.id).pass_no == 1 and len(h.findings()) == 2
+    assert not [w for w in h.github.writes if w[0] == "post_review"]

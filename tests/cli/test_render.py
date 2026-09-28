@@ -77,3 +77,18 @@ def test_show_says_when_no_coordinator_is_driving_the_run_and_that_resume_contin
     text = render_show(run(RunState.VERIFYING), findings=[], unattended=True)
 
     assert "state: verifying (no coordinator; resume continues from this phase)" in text
+
+
+def test_status_says_when_a_paused_runs_coordinator_is_still_finishing_its_phase():
+    paused = run(RunState.PAUSED, PauseReason.MANUAL)
+
+    text = render_status([paused], finishing={paused.id})
+
+    assert "paused (manual) (coordinator still finishing its phase)" in text
+    assert "finishing" not in render_status([paused])
+
+
+def test_show_tells_the_operator_to_wait_for_a_coordinator_still_finishing_its_phase():
+    text = render_show(run(RunState.PAUSED, PauseReason.MANUAL), findings=[], finishing=True)
+
+    assert "state: paused (manual) (coordinator still finishing its phase; resume after it exits)" in text

@@ -172,8 +172,11 @@ have told the user the id.
   commit it did not make and treats a dirty tree as a stop signal.
 - Do not push to the PR branch from any other checkout while a run is active. The coordinator
   pauses with `head_changed` and repeats preparation.
-- `pause <run-id>` and `stop <run-id>` from another shell take effect before the next phase.
-  `stop` cancels further work and keeps the worktree, logs and records; nothing is reset.
+- `pause <run-id>` and `stop <run-id>` from another shell take effect before the next phase. The
+  phase already running finishes first: `status` shows `(coordinator still finishing its phase)`
+  until the coordinator exits, and a `resume` before that is refused because the lock is held. Wait
+  for the suffix to go, then act. `stop` cancels further work and keeps the worktree, logs and
+  records; nothing is reset.
 
 ## 6. Paused runs
 

@@ -205,3 +205,25 @@ def test_stop_refuses_a_complete_run_naming_its_state(settings, capsys):
 
     assert "is complete" in capsys.readouterr().err
     assert runs_repo.get_run(box.conn, run.id).state == RunState.COMPLETE
+
+
+def test_status_and_show_flag_a_paused_run_whose_coordinator_still_holds_the_lock(settings, capsys):
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    main(["pause", run_id], container=box)
+    capsys.readouterr()
+    lock = RunLock(settings.state_dir, "webapp", 1004)
+    lock.acquire()
+    try:
+        main(["status"], container=box)
+        assert "paused (manual) (coordinator still finishing its phase)" in capsys.readouterr().out
+        main(["show", run_id], container=box)
+        assert "coordinator still finishing its phase" in capsys.readouterr().out
+    finally:
+        lock.release()
+
+    main(["status"], container=box)
+    assert "finishing" not in capsys.readouterr().out

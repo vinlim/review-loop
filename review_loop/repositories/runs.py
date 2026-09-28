@@ -60,6 +60,24 @@ def cancel(conn: sqlite3.Connection, run_id: str, at: str) -> tuple[bool, Run | 
     return cursor.rowcount == 1, get_run(conn, run_id)
 
 
+CONTROL_COLUMNS = ("state", "pause_reason", "resume_state")
+_CONTROLLED = "(state = 'cancelled' or (state = 'paused' and pause_reason = 'manual'))"
+
+
+def save_run_keeping_control(conn: sqlite3.Connection, run: Run) -> Run | None:
+    """Write the run's progress (pass, head, extra, everything but the control columns) unconditionally, and the control
+    columns only while no person has cancelled the run or paused it by hand. One statement, so a coordinator checkpoint
+    taken while a pause landed keeps the work and the pause both; the row as it stands comes back."""
+    columns = _COLUMNS.split(", ")
+    values = dict(zip(columns, _row_values(run)))
+    progress = [column for column in columns[1:] if column not in CONTROL_COLUMNS]
+    assignments = [f"{column} = ?" for column in progress]
+    assignments += [f"{column} = case when {_CONTROLLED} then {column} else ? end" for column in CONTROL_COLUMNS]
+    params = [values[column] for column in progress] + [values[column] for column in CONTROL_COLUMNS] + [run.id]
+    conn.execute(f"update runs set {', '.join(assignments)} where id = ?", params)
+    return get_run(conn, run.id)
+
+
 def _update(conn: sqlite3.Connection, run: Run, condition: str, params: tuple) -> bool:
     columns = _COLUMNS.split(", ")
     assignments = ", ".join(f"{column} = ?" for column in columns[1:])
