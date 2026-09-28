@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
+from review_loop.services.pytest_checks import pytest_check_command, pytest_options
 from review_loop.services.state_dir import ensure_private_dir
 from review_loop.types.agents import AGENT_PROFILES
 
@@ -16,7 +18,7 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
     has_setup = (local_path / ".claude" / "worktree-setup.sh").exists()
     has_runner = (local_path / ".claude" / "run-tests.sh").exists()
     prepare = [["bash", ".claude/worktree-setup.sh"]] if has_setup else []
-    required = [[".claude/run-tests.sh", "changed"]] if has_runner else []
+    required = _required_checks(local_path, has_runner)
     format_commands = [["vendor/bin/pint", "--dirty", "--format", "agent"]] if (local_path / "pint.json").exists() else []
     instruction_files = [f for f in ("CLAUDE.md", "AGENTS.md", "PROJECT.md") if (local_path / f).exists()]
     sanitize = LARAVEL_SANITIZED_ENV if (local_path / "artisan").exists() else []
@@ -60,6 +62,22 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
         "",
     ]
     return "\n".join(lines)
+
+
+def _required_checks(local_path: Path, has_runner: bool) -> list[list[str]]:
+    """The project's own runner wins; a Python project that configures pytest gets pytest."""
+    if has_runner:
+        return [[".claude/run-tests.sh", "changed"]]
+    options = pytest_options(local_path)
+    if options is None:
+        return []
+    return [pytest_check_command(_python_interpreter(local_path), local_path, options)]
+
+
+def _python_interpreter(local_path: Path) -> str:
+    """Absolute, because the check runs in a tool worktree that has no .venv of its own."""
+    venv_python = local_path / ".venv" / "bin" / "python"
+    return str(venv_python) if venv_python.exists() else sys.executable
 
 
 def append_registration(config_path: Path, registration: str, state_dir: Path) -> None:

@@ -1,4 +1,6 @@
+import dataclasses
 import json
+import os
 
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import runs as runs_repo
@@ -148,6 +150,21 @@ def test_passing_checks_commit_without_trailers_push_with_the_expected_parent_an
     assert results[0]["status"] == "passed" and results[0]["commands"] == [[".claude/run-tests.sh", "changed"]]
     check_call = next(call for call in h.process.calls if call["argv"] == [".claude/run-tests.sh", "changed"])
     assert check_call["cwd"] == run.worktree_path and "DB_URL" not in check_call["env"]
+
+
+def test_a_pytest_check_runs_with_the_worktree_leading_pythonpath_so_its_child_processes_test_the_worktree(settings, tmp_path):
+    repo = settings.repositories["webapp"]
+    pytest_check = ["/opt/venv/bin/python", "-m", "pytest", "-q"]
+    verification = dataclasses.replace(repo.verification, required=[pytest_check])
+    h = harness(dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, verification=verification)}), tmp_path)
+    h.process.script(pytest_check[:3], stdout="5 passed")
+    run = to_verifying(h)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PUBLISHING
+    check_call = next(call for call in h.process.calls if call["argv"] == pytest_check)
+    assert check_call["env"]["PYTHONPATH"].split(os.pathsep)[0].startswith(run.worktree_path)
 
 
 def test_failing_checks_send_the_run_back_to_fix_once_then_pause(settings, tmp_path):

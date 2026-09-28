@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 from review_loop.cli.container import TOOL_VERSION, tool_versions
@@ -56,6 +57,44 @@ def test_doctor_fails_when_a_registered_prepare_script_is_missing(settings, tmp_
 
     assert not checks["repository webapp"].ok
     assert ".claude/worktree-setup.sh" in checks["repository webapp"].detail
+
+
+def with_required(settings, required):
+    repo = settings.repositories["webapp"]
+    return dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, verification=dataclasses.replace(repo.verification, required=required))})
+
+
+def test_doctor_fails_a_repository_with_no_required_check_and_names_the_table_to_fill(settings):
+    checks = {check.name: check for check in run_doctor(make(), with_required(settings, []), SCHEMAS)}
+
+    check = checks["repository webapp verification"]
+    assert not check.ok
+    assert "a fix can never be verified" in check.detail and "[repositories.webapp.verification]" in check.detail
+
+
+def test_doctor_fails_a_pytest_check_whose_interpreter_cannot_import_pytest(settings):
+    process = make()
+    process.script(["/opt/venv/bin/python", "-c", "import pytest"], exit_code=1, stderr="ModuleNotFoundError: No module named 'pytest'")
+
+    checks = {check.name: check for check in run_doctor(process, with_required(settings, [["/opt/venv/bin/python", "-m", "pytest", "-q"]]), SCHEMAS)}
+
+    assert not checks["repository webapp verification"].ok
+    assert "/opt/venv/bin/python -m pip install pytest" in checks["repository webapp verification"].detail
+
+
+def test_doctor_passes_a_pytest_check_whose_interpreter_has_pytest(settings):
+    process = make()
+    process.script(["/opt/venv/bin/python", "-c", "import pytest"])
+
+    checks = {check.name: check for check in run_doctor(process, with_required(settings, [["/opt/venv/bin/python", "-m", "pytest", "-q"]]), SCHEMAS)}
+
+    assert checks["repository webapp verification"].ok and "-m pytest -q" in checks["repository webapp verification"].detail
+
+
+def test_doctor_lists_the_required_checks_when_there_are_some(settings):
+    checks = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}
+
+    assert checks["repository webapp verification"].ok and ".claude/run-tests.sh changed" in checks["repository webapp verification"].detail
 
 
 def test_doctor_checks_only_the_agents_the_repositories_configure(settings):

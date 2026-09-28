@@ -10,6 +10,7 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
+from review_loop.services.pytest_checks import is_pytest_check
 from review_loop.services.state_dir import readable_by_others
 from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import ProcessRunner
@@ -29,6 +30,7 @@ def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path) ->
     checks = [_python(), *(_agent(process, name) for name in agents), *([_codex_login(process)] if "codex" in agents else []),
               _gh(process), _schemas(schemas_dir), _config(settings), _state_dir(settings)]
     checks.extend(_repository(repo) for repo in settings.repositories.values())
+    checks.extend(_verification(process, repo) for repo in settings.repositories.values())
     checks.extend(_worktree_config(process, repo) for repo in settings.repositories.values())
     return checks
 
@@ -97,6 +99,16 @@ def _repository(repo) -> Check:
     if missing:
         return Check(f"repository {repo.name}", False, f"registered commands reference files missing under {repo.local_path}: {', '.join(missing)}")
     return Check(f"repository {repo.name}", True, f"{repo.local_path}")
+
+
+def _verification(process: ProcessRunner, repo) -> Check:
+    name = f"repository {repo.name} verification"
+    if not repo.verification.required:
+        return Check(name, False, f"no required check; a fix can never be verified. Add `required` under `[repositories.{repo.name}.verification]`")
+    for command in repo.verification.required:
+        if is_pytest_check(command) and _run(process, [command[0], "-c", "import pytest"]).exit_code != 0:
+            return Check(name, False, f"{command[0]} cannot import pytest; install it with `{command[0]} -m pip install pytest`")
+    return Check(name, True, "; ".join(" ".join(command) for command in repo.verification.required))
 
 
 def _worktree_config(process: ProcessRunner, repo) -> Check:
