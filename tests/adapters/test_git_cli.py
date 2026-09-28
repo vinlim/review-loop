@@ -6,10 +6,7 @@ import pytest
 from review_loop.adapters.git_cli import GitCli
 from review_loop.adapters.process import SubprocessRunner
 from tests.fakes.process import FakeProcessRunner
-
-
-def sh(cwd, *argv):
-    return subprocess.run(argv, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+from tests.gitenv import plain_git_env, sh
 
 
 @pytest.fixture
@@ -59,7 +56,7 @@ def test_a_push_url_in_the_shared_config_does_not_reach_through_the_worktree_loc
 
     git.set_worktree_push_url(worktree, "origin", "DISABLED")
 
-    subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/leak"], cwd=worktree, capture_output=True)
+    subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/leak"], cwd=worktree, capture_output=True, env=plain_git_env())
     assert sh(repo, "git", "ls-remote", "origin", "refs/heads/leak") == ""
     assert sh(repo, "git", "remote", "get-url", "--push", "--all", "origin") == origin
 
