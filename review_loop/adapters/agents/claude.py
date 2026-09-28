@@ -17,6 +17,9 @@ NO_ATTRIBUTION = '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "
 READ_ONLY_DENIED = ["Edit", "Write", "NotebookEdit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh:*)"]
 WRITE_DENIED = ["Bash(gh:*)", "Bash(git push:*)", "Bash(git commit:*)"]
 NO_MCP = '{"mcpServers":{}}'
+# -p never asks for workspace trust, so project and local settings would run the checkout's hooks, env and helper
+# commands at startup. This also drops the project's CLAUDE.md and rules; the packet names the instruction files.
+USER_SETTINGS_ONLY = "user"
 
 
 class ClaudeAdapter:
@@ -55,7 +58,8 @@ class ClaudeAdapter:
         schema_text = Path(request.schema_path).read_text()
         argv = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text,
                 "--model", request.model, "--effort", request.effort,
-                "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", NO_MCP, "--settings", NO_ATTRIBUTION]
+                "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", NO_MCP,
+                "--setting-sources", USER_SETTINGS_ONLY, "--settings", NO_ATTRIBUTION]
         if request.resume_session_id:
             argv += ["--resume", request.resume_session_id, "--fork-session"]
         for directory in request.read_dirs:

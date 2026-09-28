@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from review_loop.adapters.agents.codex import CodexAdapter
 from review_loop.types.agents import AgentFailure, PhaseRequest
 from tests.fakes.process import FakeProcessRunner
@@ -102,6 +104,20 @@ def test_a_write_phase_uses_the_workspace_write_sandbox(tmp_path):
 
     argv = process.calls[0]["argv"]
     assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+
+
+@pytest.mark.parametrize("tools_policy", ["read-only", "write"])
+def test_every_phase_ignores_the_user_config_so_the_checkout_is_never_trusted(tmp_path, tools_policy):
+    process = FakeProcessRunner()
+    process.script(["codex", "exec"], stdout=EVENTS)
+    process.on_run = lambda call: (tmp_path / "output.json").write_text(json.dumps(VALID_REVIEW))
+
+    CodexAdapter(process).run(request(tmp_path, tools_policy=tools_policy))
+
+    argv = process.calls[0]["argv"]
+    assert "--ignore-user-config" in argv and "--dangerously-bypass-hook-trust" not in argv
+    overrides = [argv[index + 1] for index, arg in enumerate(argv) if arg in ("-c", "--config")]
+    assert not any(value.startswith("projects") for value in overrides)
 
 
 def test_the_event_stream_is_written_to_the_events_file_as_it_arrives(tmp_path):

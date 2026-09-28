@@ -79,11 +79,22 @@ Whatever the agent, every read-only phase ends with a check that HEAD and the wo
 change, and the run pauses with `read_only_violated` if they did. The check sees only the worktree, so
 the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
 them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
-`agy` and `opencode` load the ones in your own settings, and also run what the checkout declares at
-startup (`.agents/hooks.json`, `.agents/mcp_config.json` and `.agents/plugins/` for `agy`; `opencode.json`
-and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can switch that off, so the
-coordinator refuses to start either agent once the PR or a fix has changed one of those files
-(`scripts_changed`).
+
+A checkout can also declare code for an agent CLI to run at startup, before its permissions apply.
+`claude -p` never asks for workspace trust, so `claude` starts with `--setting-sources user`: the
+checkout's `.claude/settings.json` and `.claude/settings.local.json` (hooks, `env`, helper commands)
+never load, and `--strict-mcp-config` keeps `.mcp.json` off. The same flag keeps the project's
+`CLAUDE.md` and `.claude/rules/` out of Claude's context. Every packet names the repository's
+`instruction_files` for the agent to read, so list `.claude/CLAUDE.md` there if a repository keeps
+its instructions in it. `codex` starts with `--ignore-user-config`, which also drops
+your list of trusted projects. The worktree then counts as untrusted, and Codex loads none of its
+`.codex/` config, hooks, rules or MCP servers. Without the flag, a worktree inherits the trust you gave
+its main checkout.
+
+`agy` and `opencode` load the MCP servers in your own settings, and also run what the checkout declares
+at startup (`.agents/hooks.json`, `.agents/mcp_config.json` and `.agents/plugins/` for `agy`;
+`opencode.json` and `.opencode/` for `opencode`). Neither CLI can switch that off, so the coordinator
+refuses to start either agent once the PR or a fix has changed one of those files (`scripts_changed`).
 
 The `agy` and `opencode` adapters follow those CLIs' published docs and are covered by offline tests,
 but neither has run against the real CLI yet. Try one PR with `--inspect-only` before letting either
