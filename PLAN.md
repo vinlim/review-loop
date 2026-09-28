@@ -63,8 +63,8 @@ repository, a PHP and Node application, was registered first and supplies the wo
 | Invocation | `review-loop start <PR URL>`; label-driven enrollment later |
 | Workspace | one dedicated worktree per enrolled PR, on a tool-owned local branch |
 | Agent execution | sequential within a PR; one active PR run at a time |
-| Reviewer | Codex, `gpt-6-astra`, reasoning `ultra`, sandbox `read-only`; any registered agent per repository (section 32) |
-| Assessor and fixer | Claude, `claude-fable-5-1`, effort `high`; assessment read-only, fix phase write; any registered agent per repository |
+| Reviewer | Codex, `gpt-5.6-sol`, reasoning `xhigh`, sandbox `read-only`; any registered agent per repository (section 32) |
+| Assessor and fixer | Claude, `claude-opus-5-5`, effort `xhigh`; assessment read-only, fix phase write; any registered agent per repository |
 | Alignment | automatic: Codex note, Claude assessment, then blind arbitration by both models with labels swapped |
 | Review budget | 7 review passes (the observed maximum; median is 3), configurable per repository and per run |
 | Fix budget | 2 editing attempts per assessment: initial fix plus one repair after failed checks |
@@ -153,10 +153,10 @@ format = [["vendor/bin/pint", "--dirty", "--format", "agent"]]
 max_review_passes = 3
 max_fix_attempts = 2
 max_alignment_exchanges = 1
-reviewer_model = "gpt-6-astra"
-reviewer_effort = "ultra"
-author_model = "claude-fable-5-1"
-author_effort = "high"
+reviewer_model = "gpt-5.6-sol"
+reviewer_effort = "xhigh"
+author_model = "claude-opus-5-5"
+author_effort = "xhigh"
 
 [repositories.webapp.publication]
 post_reviews = true

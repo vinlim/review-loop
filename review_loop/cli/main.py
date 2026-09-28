@@ -167,7 +167,8 @@ def command_show(args, box: Container) -> int:
         return 2
     from review_loop.repositories import findings as findings_repo
 
-    print(render_show(run, findings_repo.list_findings(box.conn, run.id)))
+    repo = box.settings.repositories.get(run.repo)
+    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None))
     return 0
 
 

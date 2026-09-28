@@ -38,7 +38,7 @@ def test_valid_toml_loads_into_typed_settings_with_defaults_filled_in(tmp_path):
     assert repo.review.max_review_passes == 7
     assert repo.review.max_fix_attempts == 2
     assert repo.review.max_alignment_exchanges == 1
-    assert repo.review.reviewer_model == "gpt-6-astra"
+    assert repo.review.reviewer_model == "gpt-5.6-sol"
     assert repo.review.timeouts_minutes["fix"] == 60
     assert repo.publication.forbid_commit_trailers == DEFAULT_FORBIDDEN_TRAILERS
     assert settings.state_dir == tmp_path / "state"
@@ -67,8 +67,8 @@ def test_command_given_as_a_string_instead_of_an_argument_array_is_rejected(tmp_
 def test_the_reviewer_is_codex_and_the_author_is_claude_unless_configured(tmp_path):
     review = load_settings(write(tmp_path, MINIMAL)).repositories["webapp"].review
 
-    assert (review.reviewer, review.reviewer_model, review.reviewer_effort) == ("codex", "gpt-6-astra", "ultra")
-    assert (review.author, review.author_model, review.author_effort) == ("claude", "claude-fable-5-1", "high")
+    assert (review.reviewer, review.reviewer_model, review.reviewer_effort) == ("codex", "gpt-5.6-sol", "xhigh")
+    assert (review.author, review.author_model, review.author_effort) == ("claude", "claude-opus-5-5", "xhigh")
 
 
 def test_another_agent_without_a_model_leaves_model_and_effort_to_the_cli(tmp_path):

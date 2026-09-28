@@ -52,6 +52,7 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
         budgets=Budgets(repo.review.max_review_passes, repo.review.max_fix_attempts, repo.review.max_alignment_exchanges),
         versions=dict(versions), author_session=author_session, created_at=now.isoformat(), updated_at=now.isoformat(),
         extra={"mode": "inspect" if inspect_only else "publish", "remote_head": pull.head_sha},
+        agents=repo.review.agents(),
     )
     runs_repo.create_run(conn, run)
     return Ok(run)
