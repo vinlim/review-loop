@@ -52,7 +52,18 @@ def test_align_recipe_checks_state_before_resume(skill):
     assert align.index("show <run-id>") < align.index("review-loop resume")
 
 
-def test_prepare_failed_row_names_no_log(skill):
+def test_check_environment_withholds_the_claude_login(skill):
+    """The coordinator claims the Claude login at startup; only the Claude agent's own process receives it."""
+    onboarding = " ".join(section(skill, "## 3. Onboarding").split())
+    assert "token stays" not in onboarding
+    sentence = next(part for part in onboarding.split(". ") if "CLAUDE_CODE_OAUTH_TOKEN" in part)
+    assert "only to the Claude agent" in sentence
+    assert "no check" in sentence
+
+
+def test_prepare_failed_row_reads_the_prepare_log_first(skill):
     row = next(line for line in skill.splitlines() if line.startswith("| `prepare_failed`"))
-    assert "log" not in row
-    assert "prepare" in row.split("|")[3]
+    action = row.split("|")[3]
+    assert "not kept" not in action
+    assert "`show <run-id>`" in action and "prepare-<n>.log" in action
+    assert action.index("show") < action.index("workspace.prepare"), "rerunning the commands by hand is the fallback"
