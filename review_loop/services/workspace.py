@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -101,18 +100,3 @@ def registered_script_files(repo: RepositoryConfig) -> set[str]:
         commands.extend(extra)
     return {argument for command in commands for argument in command[:2] if "/" in argument}
 
-
-def is_pytest_check(command: list[str]) -> bool:
-    return command[1:3] == ["-m", "pytest"]
-
-
-def pytest_check_env(command: list[str], worktree: str, env: dict[str, str]) -> dict[str, str]:
-    """A pytest check imports the worktree, not the interpreter's installed copy of the project, in every process it
-    starts: PYTHONPATH leads with the worktree (its src/ first, when it has one), then whatever was inherited."""
-    if not is_pytest_check(command):
-        return env
-    root = Path(worktree)
-    leading = [str(root / "src")] if (root / "src").is_dir() else []
-    leading.append(str(root))
-    inherited = env.get("PYTHONPATH", "")
-    return {**env, "PYTHONPATH": os.pathsep.join(leading + ([inherited] if inherited else []))}

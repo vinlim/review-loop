@@ -16,7 +16,8 @@ from review_loop.services.phase_support import (
     Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
     project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
-from review_loop.services.workspace import pytest_check_env, registered_script_files
+from review_loop.services.pytest_checks import pytest_check_env
+from review_loop.services.workspace import registered_script_files
 from review_loop.types.result import Err, Ok, Result
 from review_loop.types.run import PauseReason, Run, RunState
 

@@ -90,6 +90,14 @@ def test_registration_puts_a_src_layout_on_the_path_unless_the_project_already_d
     assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q"]]
 
 
+def test_a_root_the_config_declares_needs_no_override_since_pytest_reads_it_and_the_run_puts_it_in_the_environment(tmp_path):
+    repo = project(tmp_path, with_scripts=False)
+    (repo / "lib").mkdir()
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["lib"]\n')
+
+    assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q"]]
+
+
 def test_the_project_test_runner_wins_over_pytest_detection(tmp_path):
     repo = project(tmp_path)
     (repo / "pytest.ini").write_text("[pytest]\n")

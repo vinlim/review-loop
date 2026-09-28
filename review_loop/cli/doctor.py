@@ -10,7 +10,7 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
-from review_loop.services.workspace import is_pytest_check
+from review_loop.services.pytest_checks import is_pytest_check
 from review_loop.services.state_dir import readable_by_others
 from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import ProcessRunner

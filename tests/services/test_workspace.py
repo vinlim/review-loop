@@ -5,7 +5,7 @@ from pathlib import Path
 
 from review_loop.adapters.git_cli import GitCli
 from review_loop.adapters.process import SubprocessRunner
-from review_loop.services.workspace import WorkspaceProblem, prepare_workspace, pytest_check_env
+from review_loop.services.workspace import WorkspaceProblem, prepare_workspace
 from review_loop.types.run import Budgets, Run, RunState
 from tests.fakes.git import FakeGit
 from tests.fakes.process import FakeProcessRunner
@@ -186,22 +186,3 @@ def test_the_shims_directory_holds_the_empty_git_and_gh_configuration_the_enviro
 
     assert (shims / "empty-gitconfig").exists() and (shims / "empty-gh-config").is_dir()
 
-
-def test_a_pytest_check_leads_pythonpath_with_the_worktree_and_keeps_what_was_inherited(tmp_path):
-    env = pytest_check_env(["/opt/venv/bin/python", "-m", "pytest", "-q"], str(tmp_path), {"PATH": "/usr/bin", "PYTHONPATH": "/extra"})
-
-    assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path), "/extra"]) and env["PATH"] == "/usr/bin"
-
-
-def test_a_src_layout_worktree_comes_first_by_its_src_directory(tmp_path):
-    (tmp_path / "src").mkdir()
-
-    env = pytest_check_env(["/opt/venv/bin/python", "-m", "pytest", "-q"], str(tmp_path), {})
-
-    assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path / "src"), str(tmp_path)])
-
-
-def test_other_checks_run_in_the_environment_as_given(tmp_path):
-    env = {"PATH": "/usr/bin"}
-
-    assert pytest_check_env([".claude/run-tests.sh", "changed"], str(tmp_path), env) is env
