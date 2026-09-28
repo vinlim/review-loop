@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from review_loop.types.run import Run, RunState
+from review_loop.types.run import PauseReason, Run, RunState
+
+PREPARE_TAIL_LINES = 20
 
 
 def render_status(runs: list[Run]) -> str:
@@ -24,6 +26,7 @@ def render_show(run: Run, findings: list) -> str:
         f"alignment exchanges {run.budgets.max_alignment_exchanges}",
         "versions: " + (", ".join(f"{name} {version}" for name, version in sorted(run.versions.items())) or "none recorded"),
         f"worktree: {run.worktree_path or 'not prepared'}",
+        *_prepare_failure_lines(run),
         "",
     ]
     if not findings:
@@ -31,6 +34,13 @@ def render_show(run: Run, findings: list) -> str:
     for finding in findings:
         lines.append(f"{finding.id} [{finding.severity}] {finding.state}: {finding.title} ({finding.file}:{finding.line})")
     return "\n".join(lines)
+
+
+def _prepare_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.PREPARE_FAILED or not run.extra.get("prepare_failure"):
+        return []
+    tail = run.extra["prepare_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
+    return [f"prepare log: {run.extra.get('prepare_log', '')}", *("  " + line for line in tail)]
 
 
 def _state(run: Run) -> str:

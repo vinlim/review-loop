@@ -137,6 +137,47 @@ def test_a_failing_prepare_command_is_reported_not_ignored(settings, tmp_path):
     assert not result.ok and result.error == WorkspaceProblem.PREPARE_FAILED
 
 
+def test_a_failing_prepare_writes_a_log_with_the_command_its_exit_code_and_output_then_runs_nothing_else(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    process.scripts.clear()
+    process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stdout="composer install", stderr="composer: not found")
+    log_path = tmp_path / "prepare-1.log"
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=["resources/js/app.ts"], log_path=log_path)
+
+    assert not result.ok and result.error == WorkspaceProblem.PREPARE_FAILED
+    assert log_path.read_text() == "$ bash .claude/worktree-setup.sh\nexit 1\ncomposer install\ncomposer: not found"
+    assert len(process.calls) == 1
+
+
+def test_a_successful_prepare_writes_its_log_too_one_block_per_command(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    process.scripts.clear()
+    process.script(["bash", ".claude/worktree-setup.sh"], stdout="dependencies installed")
+    log_path = tmp_path / "prepare-1.log"
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=["resources/js/app.ts"], log_path=log_path)
+
+    assert result.ok
+    assert log_path.read_text() == ("$ bash .claude/worktree-setup.sh\nexit 0\ndependencies installed\n\n"
+                                    "$ bash .claude/worktree-setup.sh --js\nexit 0\ndependencies installed\n")
+
+
+def test_a_timed_out_prepare_command_fails_the_preparation_and_is_marked_in_the_log(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    process.scripts.clear()
+    process.script(["bash", ".claude/worktree-setup.sh"], exit_code=-1, timed_out=True, stdout="downloading vendor packages")
+    log_path = tmp_path / "prepare-1.log"
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], log_path=log_path)
+
+    assert not result.ok and result.error == WorkspaceProblem.PREPARE_FAILED
+    assert log_path.read_text().startswith("$ bash .claude/worktree-setup.sh\nexit -1 (timed out)\ndownloading vendor packages")
+
+
 def test_the_shims_directory_holds_the_empty_git_and_gh_configuration_the_environment_points_at(tmp_path):
     from review_loop.services.workspace import ensure_shims
 
