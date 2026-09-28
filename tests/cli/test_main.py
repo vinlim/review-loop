@@ -98,3 +98,14 @@ def test_the_start_line_reports_the_resolved_mode_for_a_run_without_a_stored_one
     assert main(["start", URL, "--no-run", "--inspect-only"], container=box) == 0
 
     assert f"run {run.id} (paused, inspect)" in capsys.readouterr().out
+
+
+def test_main_claims_the_claude_login_before_any_command_runs(settings, monkeypatch, capsys):
+    import os
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "author-token")
+    box = container(settings)
+
+    assert main(["status"], container=box) == 0
+
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ

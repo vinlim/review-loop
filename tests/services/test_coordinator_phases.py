@@ -8,6 +8,7 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import runs as runs_repo
 from review_loop.repositories.db import connect, migrate
+from review_loop.services import run_control
 from review_loop.services.run_coordinator import Deps, run_loop, step
 from review_loop.services.start import start_run
 from review_loop.types.agents import AgentError, AgentFailure
@@ -71,6 +72,51 @@ def test_prepare_on_a_closed_pull_request_cancels_without_touching_git(settings,
 
     assert run.state == RunState.CANCELLED
     assert not any(call[0] == "worktree_add" for call in h.git.calls)
+
+
+def test_a_successful_prepare_leaves_its_log_under_the_run_directory(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], stdout="dependencies installed")
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.REVIEWING
+    log = tmp_path / "runs" / run.id / "prepare-1.log"
+    assert log.read_text() == "$ bash .claude/worktree-setup.sh\nexit 0\ndependencies installed\n"
+    assert run.extra["prepare_log"] == str(log) and "prepare_failure" not in run.extra
+
+
+def test_a_failed_prepare_pauses_with_the_log_written_and_its_tail_recorded_on_the_run(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stdout="composer install", stderr="composer: not found")
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.PREPARE_FAILED and run.resume_state == RunState.PREPARING
+    log = tmp_path / "runs" / run.id / "prepare-1.log"
+    assert log.read_text() == "$ bash .claude/worktree-setup.sh\nexit 1\ncomposer install\ncomposer: not found"
+    persisted = runs_repo.get_run(h.conn, run.id)
+    assert persisted.extra["prepare_log"] == str(log) and persisted.extra["prepare_failure"] == log.read_text()
+
+
+def test_a_second_prepare_on_the_same_run_numbers_its_log_instead_of_overwriting_the_first(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stderr="composer: not found")
+    run = step(h.deps, h.run)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], stdout="dependencies installed")
+    resumed = run_control.resume(h.conn, run, h.clock).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING
+    run_dir = tmp_path / "runs" / run.id
+    assert "composer: not found" in (run_dir / "prepare-1.log").read_text()
+    assert "dependencies installed" in (run_dir / "prepare-2.log").read_text()
+    assert run.extra["prepare_log"] == str(run_dir / "prepare-2.log") and "prepare_failure" not in run.extra
 
 
 def test_the_first_review_stores_findings_with_ids_and_moves_to_assessing(settings, tmp_path):
@@ -275,6 +321,9 @@ def test_a_read_only_phase_that_breaks_the_worktrees_git_metadata_pauses_and_clo
     ("agy", ".agents/hooks.json"),
     ("agy", ".agents/mcp_config.json"),
     ("agy", ".agents/plugins/lint/hooks.json"),
+    ("agy", ".agents/agents/helper.md"),
+    ("agy", ".agents"),
+    ("opencode", ".opencode"),
 ])
 def test_a_pr_that_changes_a_file_the_agent_cli_runs_at_startup_pauses_before_that_agent_starts(settings, tmp_path, agent, path):
     h = Harness(with_review(settings, reviewer=agent, reviewer_model="", reviewer_effort=""), tmp_path)
@@ -289,14 +338,15 @@ def test_a_pr_that_changes_a_file_the_agent_cli_runs_at_startup_pauses_before_th
     assert run.extra["scripts_changed"] == [path] and reviewer.requests == []
 
 
-def test_a_startup_file_changed_in_the_worktree_stops_the_next_run_of_that_agent(settings, tmp_path):
+@pytest.mark.parametrize("listing", ["working_changed", "ignored"])
+def test_a_startup_file_written_into_the_worktree_ignored_or_not_stops_the_next_run_of_that_agent(settings, tmp_path, listing):
     h = Harness(with_review(settings, author="opencode", author_model="", author_effort=""), tmp_path)
     opencode = FakeAgent()
     h.deps.agents["opencode"] = opencode
     run = step(h.deps, h.run)
     h.reviewer.reply(REVIEW_984)
     run = step(h.deps, run)
-    h.git.working_changed.append(".opencode/plugins/notify.ts")
+    getattr(h.git, listing).append(".opencode/plugins/notify.ts")
 
     run = step(h.deps, run)
 
@@ -325,6 +375,21 @@ def test_a_startup_file_of_an_agent_the_repository_does_not_use_does_not_pause(s
     run = step(h.deps, run)
 
     assert run.state == RunState.ASSESSING
+
+
+@pytest.mark.parametrize("path", [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".codex/config.toml",
+                                  ".codex/hooks.json"])
+def test_a_pr_that_changes_claude_or_codex_project_config_starts_both_agents_since_their_flags_ignore_it(settings, tmp_path, path):
+    h = Harness(settings, tmp_path)
+    h.git.changed = ["app/Models/User.php", path]
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(ASSESS_984)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.FIXING and len(h.reviewer.requests) == 1 and len(h.author.requests) == 1
 
 
 def test_prepare_looks_for_a_desktop_session_of_the_configured_author_agent(settings, tmp_path):

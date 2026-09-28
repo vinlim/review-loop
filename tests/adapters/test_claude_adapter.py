@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from review_loop.adapters.agents.claude import ClaudeAdapter
 from review_loop.types.agents import AgentFailure, PhaseRequest
 from tests.fakes.process import FakeProcessRunner
@@ -70,6 +72,18 @@ def test_a_resumed_session_reapplies_the_same_restrictions(tmp_path):
     argv = process.calls[0]["argv"]
     assert argv[argv.index("--resume") + 1] == "sess-0"
     assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob,Bash"
+
+
+@pytest.mark.parametrize("tools_policy, resume", [("read-only", ""), ("write", ""), ("read-only", "sess-0")])
+def test_every_phase_loads_no_settings_files_so_no_hook_or_env_block_runs_at_startup(tmp_path, tools_policy, resume):
+    process = FakeProcessRunner()
+    process.script(["claude", "-p"], stdout=result_json())
+
+    ClaudeAdapter(process).run(request(tmp_path, tools_policy=tools_policy, resume=resume))
+
+    argv = process.calls[0]["argv"]
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert json.loads(argv[argv.index("--settings") + 1])["includeCoAuthoredBy"] is False
 
 
 def test_a_success_without_structured_output_is_malformed(tmp_path):
@@ -156,3 +170,22 @@ def test_attribution_is_switched_off_through_settings_and_the_shell_readers_are_
     allowed = argv[argv.index("--allowedTools") + 1: argv.index("--disallowedTools")]
     assert not any(tool.startswith(prefix) for tool in allowed for prefix in ("Bash(find", "Bash(sed", "Bash(rg", "Bash(cat", "Bash(head", "Bash(tail", "Bash(wc"))
     assert "Bash(git diff:*)" in allowed
+
+
+def test_the_adapter_adds_its_own_login_to_the_process_environment(tmp_path):
+    process = FakeProcessRunner()
+    process.script(["claude", "-p"], stdout=result_json())
+
+    ClaudeAdapter(process, oauth_token="author-token").run(request(tmp_path))
+
+    env = process.calls[0]["env"]
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "author-token" and env["PATH"] == "/usr/bin"
+
+
+def test_without_a_login_the_adapter_passes_the_request_environment_unchanged(tmp_path):
+    process = FakeProcessRunner()
+    process.script(["claude", "-p"], stdout=result_json())
+
+    ClaudeAdapter(process).run(request(tmp_path))
+
+    assert process.calls[0]["env"] == {"PATH": "/usr/bin"}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from review_loop.types.run import AgentChoice, Run, RunState
+from review_loop.types.run import AgentChoice, PauseReason, Run, RunState
+
+PREPARE_TAIL_LINES = 20
 
 
 def render_status(runs: list[Run]) -> str:
@@ -27,6 +29,7 @@ def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | N
         f"agents: {_agents(run.agents)}",
         *([f"agents in config now: {_agents(configured)}"] if configured and configured != run.agents else []),
         f"worktree: {run.worktree_path or 'not prepared'}",
+        *_prepare_failure_lines(run),
         "",
     ]
     if not findings:
@@ -41,6 +44,13 @@ def _agents(choices: dict[str, AgentChoice]) -> str:
         return "not recorded"
     return "; ".join(f"{role} {choice.agent} model {choice.model or 'CLI default'} effort {choice.effort or 'CLI default'}"
                      for role, choice in choices.items())
+
+
+def _prepare_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.PREPARE_FAILED or not run.extra.get("prepare_failure"):
+        return []
+    tail = run.extra["prepare_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
+    return [f"prepare log: {run.extra.get('prepare_log', '')}", *("  " + line for line in tail)]
 
 
 def _state(run: Run) -> str:

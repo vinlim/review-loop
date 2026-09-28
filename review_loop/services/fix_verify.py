@@ -13,8 +13,8 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import phases as phases_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
-    Deps, agent_env, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
-    pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
+    Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
+    project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.workspace import registered_script_files
 from review_loop.types.result import Err, Ok, Result
@@ -88,7 +88,7 @@ def phase_verify(deps: Deps, run: Run) -> Run:
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED, resume_state=RunState.VERIFYING)
     attempt_no = len([r for r in verification_repo.list_results(deps.conn, run.id) if r["pass_no"] == run.pass_no]) + 1
     commands = list(repo_config.verification.format) + list(repo_config.verification.required)
-    env = agent_env(deps, repo_config)
+    env = project_env(deps, repo_config)
     status, log, tree = _run_checks(deps, run, repo_config, env)
     log_path = directory / f"verify-{attempt_no}.log"
     log_path.write_text(log)

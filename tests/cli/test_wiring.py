@@ -43,3 +43,13 @@ def test_every_agent_the_config_accepts_has_an_adapter(settings):
 
     assert set(deps.agents) == set(AGENT_PROFILES)
     assert isinstance(deps.agents["agy"], AgyAdapter) and isinstance(deps.agents["opencode"], OpencodeAdapter)
+
+
+def test_build_deps_hands_the_claimed_login_to_the_claude_adapter_alone(settings):
+    box = container(settings)
+    box.claude_oauth_token = "author-token"
+
+    deps = build_deps(box, inspect_only=False, platform="linux")
+
+    assert deps.agents["claude"].oauth_token == "author-token"
+    assert [name for name, adapter in deps.agents.items() if getattr(adapter, "oauth_token", "")] == ["claude"]

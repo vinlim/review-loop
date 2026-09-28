@@ -17,18 +17,27 @@ NO_ATTRIBUTION = '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "
 READ_ONLY_DENIED = ["Edit", "Write", "NotebookEdit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh:*)"]
 WRITE_DENIED = ["Bash(gh:*)", "Bash(git push:*)", "Bash(git commit:*)"]
 NO_MCP = '{"mcpServers":{}}'
+# No settings file loads, only managed settings and --settings. -p never asks for workspace trust, so project
+# settings would run the checkout's hooks at startup; a user hook runs with the checkout as its project directory, and
+# any settings env block overrides the guards in the coordinator's environment. CLAUDE.md files and rules drop out
+# too; the packet names the instruction files.
+NO_SETTINGS_FILES = ""
 
 
 class ClaudeAdapter:
-    def __init__(self, process: ProcessRunner):
+    """The login travels with this adapter, so no other agent's process and no project command ever holds it."""
+
+    def __init__(self, process: ProcessRunner, oauth_token: str = ""):
         self.process = process
+        self.oauth_token = oauth_token
 
     def run(self, request: PhaseRequest) -> Result[PhaseOutput, AgentError]:
         output_dir = Path(request.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         result_path = output_dir / "result.json"
         argv = self.argv(request)
-        completed = self.process.run(argv, cwd=request.cwd, env=request.env, timeout_seconds=request.timeout_seconds, stdin=request.prompt)
+        env = {**request.env, "CLAUDE_CODE_OAUTH_TOKEN": self.oauth_token} if self.oauth_token else request.env
+        completed = self.process.run(argv, cwd=request.cwd, env=env, timeout_seconds=request.timeout_seconds, stdin=request.prompt)
         result_path.write_text(completed.stdout)
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:
@@ -55,7 +64,8 @@ class ClaudeAdapter:
         schema_text = Path(request.schema_path).read_text()
         argv = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text,
                 "--model", request.model, "--effort", request.effort,
-                "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", NO_MCP, "--settings", NO_ATTRIBUTION]
+                "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", NO_MCP,
+                "--setting-sources", NO_SETTINGS_FILES, "--settings", NO_ATTRIBUTION]
         if request.resume_session_id:
             argv += ["--resume", request.resume_session_id, "--fork-session"]
         for directory in request.read_dirs:

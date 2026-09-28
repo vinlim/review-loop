@@ -10,6 +10,7 @@ class FakeGit:
         self.log_lines: list[str] = []
         self.heads: dict[str, str] = {}
         self.working_changed: list[str] = []
+        self.ignored: list[str] = []
         self.commits: list[tuple[str, str]] = []
         self.push_results: list = []
         self.pushes: list[tuple] = []
@@ -69,6 +70,11 @@ class FakeGit:
 
     def head_sha(self, path: str) -> str:
         return self.heads.get(path, "h" * 40)
+
+    def paths_differing_from(self, path: str, base: str, pathspecs: list[str]) -> list[str]:
+        self._record("paths_differing_from", path, base, list(pathspecs))
+        return [entry for entry in self.changed + self.working_changed + self.ignored
+                if any(entry == spec or entry.startswith(spec + "/") for spec in pathspecs)]
 
     def working_changed_files(self, path: str) -> list[str]:
         return list(self.working_changed)

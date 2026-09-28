@@ -14,6 +14,7 @@ from review_loop.adapters.github_gh import GhGitHub
 from review_loop.adapters.process import SubprocessRunner
 from review_loop.config.settings import Settings, load_settings
 from review_loop.repositories.db import connect, migrate
+from review_loop.services.state_dir import ensure_private_dir
 from review_loop.types.agents import AGENT_PROFILES
 
 TOOL_VERSION = "0.1.0"
@@ -34,6 +35,7 @@ class Container:
     clock: Any
     versions: dict[str, str] = field(default_factory=dict)
     home: Path = Path.home() / ".review-loop"
+    claude_oauth_token: str = ""  # the Claude adapter is its only holder; every other subprocess starts without it
 
     @property
     def schemas_dir(self) -> Path:
@@ -48,17 +50,22 @@ def default_home() -> Path:
     return Path(os.environ.get("REVIEW_LOOP_HOME", str(Path.home() / ".review-loop")))
 
 
-def build_container(home: Path | None = None) -> Container:
+def claim_claude_oauth_token() -> str:
+    """Taken out of the process environment before anything else runs, so no subprocess of the coordinator inherits it."""
+    return os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", "")
+
+
+def build_container(home: Path | None = None, claude_oauth_token: str = "") -> Container:
     home = home or default_home()
     settings = load_settings(home / "config.toml")
-    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(settings.state_dir)
     conn = connect(str(settings.state_dir / "state.db"))
     migrate(conn)
     process = SubprocessRunner()
     env = dict(os.environ)
     return Container(settings=settings, conn=conn, process=process, git=GitCli(process, env),
                      github=GhGitHub(process, cwd=str(home), env=env), clock=SystemClock(),
-                     versions=tool_versions(process, env, settings), home=home)
+                     versions=tool_versions(process, env, settings), home=home, claude_oauth_token=claude_oauth_token)
 
 
 def tool_versions(process: SubprocessRunner, env: dict[str, str], settings: Settings) -> dict[str, str]:

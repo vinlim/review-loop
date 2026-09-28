@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
+from review_loop.services.state_dir import ensure_private_dir
 from review_loop.types.agents import AGENT_PROFILES
 
 PYTEST_CONFIG_FILES = ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg")
@@ -136,7 +137,7 @@ def _python_interpreter(local_path: Path) -> str:
 
 
 def append_registration(config_path: Path, registration: str, state_dir: Path) -> None:
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(config_path.parent)
     if not config_path.exists():
         config_path.write_text(f"state_dir = {_v(str(state_dir))}\n\n{registration}")
         return
