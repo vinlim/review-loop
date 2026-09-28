@@ -28,14 +28,14 @@ from review_loop.services.workspace import registered_script_files
 from review_loop.repositories import runs as runs_repo
 from review_loop.services.workspace import WorkspaceProblem, prepare_workspace
 from review_loop.types.findings import Finding
-from review_loop.types.run import PauseReason, Run, RunState
+from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
 
 RESOLUTION_EVENTS = {"verified": ("verify",), "withdrawn": ("withdraw",), "rejection_accepted": ("accept_rejection",),
                      "disputed": ("dispute",)}
 SEVERITY_RANK = {"QUESTION": 0, "CHORE": 1, "ISSUE": 2, "BLOCKER": 3}
 OMISSION_EVENTS = {FindingState.FIXED_PENDING_VERIFICATION: ("verify",), FindingState.REJECTED_PENDING_REVIEW: ("accept_rejection",)}
 DISPOSITION_EVENTS = {"accept": "accept", "reject": "reject", "needs_alignment": "needs_alignment", "answer": "answer"}
-STOPPED = {RunState.COMPLETE, RunState.FAILED, RunState.CANCELLED, RunState.PAUSED}
+STOPPED = frozenset(RunState) - WORKING_STATES
 MUTATING = {RunState.FIXING, RunState.VERIFYING}
 
 

@@ -179,24 +179,24 @@ def test_a_review_pass_that_crashed_after_posting_is_not_posted_again_on_resume(
     h = harness(settings, tmp_path)
     run = step(h.deps, h.run)
     h.reviewer.reply(REVIEW_984)
-    original_save = runs_repo.save_run
+    original_save = runs_repo.save_run_unless_controlled  # the write every phase transition goes through
     calls = {"n": 0}
 
     def crash_after_publish(conn, run_object):
         if [w for w in h.github.writes if w[0] == "post_review"] and calls["n"] == 0:
             calls["n"] += 1
             raise RuntimeError("simulated crash after publication, before the transition was saved")
-        original_save(conn, run_object)
+        return original_save(conn, run_object)
 
     import review_loop.services.phase_support as support
-    support.runs_repo.save_run = crash_after_publish
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
     try:
         try:
             step(h.deps, run)
         except RuntimeError:
             pass
     finally:
-        support.runs_repo.save_run = original_save
+        support.runs_repo.save_run_unless_controlled = original_save
 
     persisted = runs_repo.get_run(h.conn, run.id)
     assert persisted.pass_no == 1 and len(h.findings()) == 2
@@ -240,3 +240,17 @@ def test_a_push_that_succeeded_before_a_crash_is_recognised_on_resume(settings, 
     run = step(h.deps, run)
 
     assert run.state == RunState.PUBLISHING and run.head_sha == pushed and len(h.git.pushes) == 1
+
+
+def test_a_phase_pause_after_an_external_stop_keeps_the_stop(settings, tmp_path):
+    from review_loop.types.agents import AgentError, AgentFailure
+
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+    h.reviewer.fail(AgentError(AgentFailure.TIMEOUT, "slow"))
+    h.reviewer.fail(AgentError(AgentFailure.TIMEOUT, "slow again"))
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED

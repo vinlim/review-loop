@@ -300,3 +300,11 @@ def test_a_budget_or_timeout_below_its_minimum_is_rejected_naming_the_minimum(tm
         load_settings(path)
 
     assert f"repositories.webapp.{key} must be at least {minimum}" in str(raised.value)
+
+
+def test_a_verification_fallback_reaches_the_settings_and_is_empty_when_unset(tmp_path):
+    assert load_settings(write(tmp_path, MINIMAL)).repositories["webapp"].verification.fallback == []
+
+    path = write(tmp_path, MINIMAL + 'fallback = [[".claude/run-tests.sh", "full"]]\n')
+
+    assert load_settings(path).repositories["webapp"].verification.fallback == [[".claude/run-tests.sh", "full"]]

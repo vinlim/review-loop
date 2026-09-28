@@ -84,16 +84,30 @@ that PR. The command states that scope during onboarding.
 ```text
 review-loop repo add <local repository path>
 review-loop doctor                       # CLI versions, auth routes, sandbox behaviour, config validity
-review-loop start <PR URL> [--author-session <claude session id>]
+review-loop start <PR URL> [--detach] [--no-preflight] [--author-session <claude session id>]
+review-loop drive <run-id>               # the loop in this process; what --detach starts in its own session
+review-loop wait <run-id>                # follow a run another process drives, to its stop
 review-loop status [run-id]
 review-loop show <run-id>                # findings, dispositions, verification, publication receipts
-review-loop pause|resume|stop <run-id>
+review-loop pause|resume [--detach]|stop <run-id>
 review-loop align <run-id> --file <decision.md>   # optional override; never required
 review-loop inbox list|show|dismiss|schedule|resolve
 ```
 
 `pause` keeps the run resumable. `stop` cancels further work and keeps changes, logs and records.
-Neither resets the branch or deletes the worktree.
+Neither resets the branch or deletes the worktree, and neither writes anything but the run's control
+columns, so a coordinator's progress persisted after the command read the run is never rewound. A
+finished run (complete, failed, cancelled) is never paused or stopped again; both commands report the
+state they found instead, so a stopped run can never come back into the active set.
+
+`--detach` hands the run to `drive` in its own session, with its output in `runs/<run-id>/coordinator.log`,
+so the run outlives the shell that started it; `wait` follows it and ends as a foreground drive would.
+The PR lock doubles as the liveness signal: a run in a working state whose lock nobody holds is shown
+as `(no coordinator)` by `status` and `show`, `wait` reports it, and `resume` continues it from that
+phase. A crash inside the coordinator pauses the run as `coordinator_failed` with the traceback kept
+for `show`. Before the first phase and on every resume, each agent answers one structured probe with
+the model and effort a phase would use; a CLI that cannot serve its model pauses the run as
+`agent_unavailable` before anything is read or posted, and `doctor` runs the same probes.
 
 Later: `review-loop watch` enrolls PRs that carry a `review-loop` label from a trusted author, and
 trusted logins can post `/review-loop pause|resume|stop|note <text>` on the PR.
@@ -147,6 +161,7 @@ sanitize_env = ["DB_*", "DB_URL", "CACHE_STORE", "SESSION_DRIVER", "QUEUE_CONNEC
 [repositories.webapp.verification]
 required = [[".claude/run-tests.sh", "changed"]]
 unavailable_exit_codes = [3]          # "nothing maps" is incomplete verification, never a pass
+fallback = [[".claude/run-tests.sh", "full"]]   # runs when every required check passed or selected nothing; decides in their place
 format = [["vendor/bin/pint", "--dirty", "--format", "agent"]]
 
 [repositories.webapp.review]
@@ -530,8 +545,11 @@ silently alter evidence.
 | unexpected local edits | pause, preserve |
 | duplicate start for one PR | return the active run or refuse |
 | invalid or missing agent output | no dependent write; bounded retry, then pause; partial output kept for diagnosis |
-| required checks fail | preserve evidence; one repair attempt, then pause |
-| checks unavailable or nothing selected | report incomplete verification; never a pass |
+| required checks fail | preserve evidence; one repair attempt (counted in fix runs, so a verification that ran nothing costs none), then pause; the repair may touch code the PR already had |
+| checks unavailable or nothing selected | report incomplete verification; never a pass; a registered fallback runs when every check passed or selected nothing, and its result stands in their place |
+| an agent cannot serve its configured model | probe each agent before the first phase and on every resume; pause with `agent_unavailable` and the CLI's own error |
+| coordinator crash | pause with `coordinator_failed`, traceback kept; resume retries the phase; a stop or manual pause that landed meanwhile stands, as after any coordinator pause |
+| coordinator process lost (session closed, shell killed) | the free lock shows the run as `(no coordinator)`; resume continues from that phase |
 | usage limit | pause with `usage_limit`; automatic resumption after the window is an opt-in policy |
 | authentication expired | pause with `auth_required`; renew through the CLI's own flow |
 | agent timeout or crash | stop the process group; reconcile the workspace and partial output |
@@ -694,6 +712,8 @@ High-value tests:
 15. Review and assessment phases cannot modify source through tools, MCP or inherited hooks.
 16. Unexpected edits, an externally closed PR, and cancellation stop writes without deleting work.
 17. Configuration or instruction files on the PR branch grant no coordinator permission.
+18. A detached run outlives the shell that started it; a run that lost its coordinator is visible as such and resumable in place.
+19. No phase starts on an agent that cannot serve its configured model.
 18. Resumed sessions receive the same phase restrictions.
 19. Inline placement: a finding on a line outside the diff lands in the body with a reference.
 20. A commit with a forbidden trailer is refused before push.
@@ -1162,7 +1182,9 @@ suite grew from 196 to 277 tests. The ones that changed the design:
 - **Operability.** Each agent attempt has its own output directory and stale output is deleted; a
   write phase is never retried on a partial tree; gateway errors pause with the entry left
   uncertain; `restore` runs before any configuration exists; backups snapshot the database through
-  the SQLite API and carry a patch per dirty worktree; prompts and schemas ship inside the package.
+  the SQLite API and carry a patch per dirty worktree; prompts and schemas ship inside the package;
+  a detached coordinator logs to the run directory, a crash pauses the run with its traceback, and
+  the PR lock tells a driven run from one nobody drives.
 
 Accepted residuals, documented rather than fixed: an agent under `bypassPermissions` can still
 invoke a tool by absolute path, so containment is layered (environment, shim, denies, and the

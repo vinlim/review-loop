@@ -43,6 +43,7 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
         f"[repositories.{name}.verification]",
         f"required = {_v(required)}",
         f"unavailable_exit_codes = {_v([3] if has_runner else [])}",
+        f"fallback = {_v([['.claude/run-tests.sh', 'full']] if has_runner else [])}",
         f"format = {_v(format_commands)}",
         "",
         f"[repositories.{name}.review]",

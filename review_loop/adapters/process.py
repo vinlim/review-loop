@@ -40,6 +40,15 @@ class SubprocessRunner:
         return CompletedRun(list(argv), code, stdout or "", stderr or "", timed_out=timed_out)
 
 
+def spawn_detached(argv: list[str], cwd: str, env: dict[str, str], log_path) -> int:
+    """Start argv in its own session with its output appended to log_path, so it outlives this process and the
+    process group that started it; returns the pid. Nothing is inherited but the environment given."""
+    with open(log_path, "a") as log:
+        process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                   start_new_session=True, close_fds=True)
+    return process.pid
+
+
 def _terminate_group(process: subprocess.Popen, grace_seconds: float = 2.0) -> None:
     """TERM the whole group, wait briefly, then KILL the whole group: a grandchild that ignores TERM must not survive the leader."""
     _signal_group(process, signal.SIGTERM)

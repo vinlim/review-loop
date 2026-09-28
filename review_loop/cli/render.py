@@ -7,20 +7,23 @@ from review_loop.types.run import AgentChoice, PauseReason, Run, RunState
 PREPARE_TAIL_LINES = 20
 
 
-def render_status(runs: list[Run]) -> str:
+def render_status(runs: list[Run], unattended: set[str] = frozenset()) -> str:
+    """`unattended` names the runs in a working state that no coordinator process is driving."""
     if not runs:
         return "no runs"
-    lines = [f"{'run':<34} {'pr':<6} {'state':<24} {'pass':<8} updated"]
+    lines = [f"{'run':<34} {'pr':<6} {'state':<28} {'pass':<8} updated"]
     for run in runs:
-        lines.append(f"{run.id:<34} #{run.pr_number:<5} {_state(run):<24} {'pass ' + str(run.pass_no):<8} {run.updated_at}")
+        state = _state(run) + (" (no coordinator)" if run.id in unattended else "")
+        lines.append(f"{run.id:<34} #{run.pr_number:<5} {state:<28} {'pass ' + str(run.pass_no):<8} {run.updated_at}")
     return "\n".join(lines)
 
 
-def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | None = None) -> str:
+def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | None = None, unattended: bool = False) -> str:
     """`configured` is what the repository's config says now; it is printed only when it differs from what the run recorded."""
+    state = _state(run) + (" (no coordinator; resume continues from this phase)" if unattended else "")
     lines = [
         f"run {run.id}: {run.pr_url}",
-        f"state: {_state(run)}" + (f", outcome {run.outcome.value}" if run.outcome else ""),
+        f"state: {state}" + (f", outcome {run.outcome.value}" if run.outcome else ""),
         f"branch: {run.head_ref} at {run.head_sha}",
         f"base: {run.base_ref} at {run.base_sha} (merge base {run.merge_base_sha})",
         f"budgets: passes {run.pass_no}/{run.budgets.max_review_passes}, fix attempts {run.budgets.max_fix_attempts} per assessment, "
@@ -30,6 +33,8 @@ def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | N
         *([f"agents in config now: {_agents(configured)}"] if configured and configured != run.agents else []),
         f"worktree: {run.worktree_path or 'not prepared'}",
         *_prepare_failure_lines(run),
+        *_coordinator_failure_lines(run),
+        *_preflight_failure_lines(run),
         "",
     ]
     if not findings:
@@ -51,6 +56,19 @@ def _prepare_failure_lines(run: Run) -> list[str]:
         return []
     tail = run.extra["prepare_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
     return [f"prepare log: {run.extra.get('prepare_log', '')}", *("  " + line for line in tail)]
+
+
+def _coordinator_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.COORDINATOR_FAILED or not run.extra.get("coordinator_failure"):
+        return []
+    tail = run.extra["coordinator_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
+    return ["coordinator failure (resume retries the phase):", *("  " + line for line in tail)]
+
+
+def _preflight_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.AGENT_UNAVAILABLE or not run.extra.get("preflight_failure"):
+        return []
+    return [f"preflight: {run.extra['preflight_failure']}"]
 
 
 def _state(run: Run) -> str:

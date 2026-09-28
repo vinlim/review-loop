@@ -36,6 +36,7 @@ class VerificationConfig:
     required: list[list[str]]
     unavailable_exit_codes: list[int] = field(default_factory=list)
     format: list[list[str]] = field(default_factory=list)
+    fallback: list[list[str]] = field(default_factory=list)  # runs when a required check reports nothing selected; must pass in its place
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def _verification(reader: _Reader, verification: dict[str, Any], prefix: str) ->
         "required": reader.commands(verification, "required", prefix),
         "unavailable_exit_codes": reader.integer_list(verification, "unavailable_exit_codes", prefix, default=[]),
         "format": reader.commands(verification, "format", prefix, default=[]),
+        "fallback": reader.commands(verification, "fallback", prefix, default=[]),
     }
     reader.reject_unknown(verification, values, prefix)
     return VerificationConfig(**values)

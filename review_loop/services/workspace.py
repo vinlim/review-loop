@@ -95,7 +95,8 @@ def ensure_shims(state_dir: Path) -> Path:
 
 def registered_script_files(repo: RepositoryConfig) -> set[str]:
     """Files the registered commands execute from the checkout; a PR or a fix that changes them is not trusted."""
-    commands = list(repo.workspace.prepare) + list(repo.verification.required) + list(repo.verification.format)
+    commands = (list(repo.workspace.prepare) + list(repo.verification.required) + list(repo.verification.fallback)
+                + list(repo.verification.format))
     for extra in repo.workspace.prepare_when_paths_match.values():
         commands.extend(extra)
     return {argument for command in commands for argument in command[:2] if "/" in argument}

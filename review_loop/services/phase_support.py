@@ -276,14 +276,16 @@ def now(deps: Deps) -> str:
 
 
 def save(deps: Deps, run: Run, state: RunState) -> Run:
-    """Persist a transition, unless another process stopped or paused the run meanwhile: that control wins."""
-    persisted = runs_repo.get_run(deps.conn, run.id)
-    if persisted is not None and externally_controlled(persisted) and state != RunState.CANCELLED:
-        return persisted
+    """Persist a transition, unless a person stopped or paused the run meanwhile: that control wins, in one statement.
+    A cancellation the phase decided itself (a closed PR) is written regardless."""
     run.state = state
     run.updated_at = now(deps)
-    runs_repo.save_run(deps.conn, run)
-    return run
+    if state == RunState.CANCELLED:
+        runs_repo.save_run(deps.conn, run)
+        return run
+    if runs_repo.save_run_unless_controlled(deps.conn, run):
+        return run
+    return runs_repo.get_run(deps.conn, run.id) or run
 
 
 def externally_controlled(persisted: Run) -> bool:

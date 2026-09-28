@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from review_loop.engine.findings import FindingState
 from review_loop.engine.packet import PacketInput, render_packet
@@ -54,7 +55,10 @@ def _fix_prompt(deps: Deps, run: Run, repo_config, directory, accepted) -> str:
     ))
     failure = run.extra.get(f"verify_failure_pass_{run.pass_no}", "")
     if failure:
-        packet += f"\n## Verification failure\n\nThe previous fix attempt failed the required checks. Repair it.\n\n```\n{failure}\n```\n"
+        packet += ("\n## Verification failure\n\nThe required checks failed on the tree that holds your changes. Repair whatever "
+                   "makes them fail, whether your change or code the PR already had: that repair is inside your scope even when no "
+                   "finding names the file. List each repaired file in the change entry of the finding it unblocks and say why.\n\n"
+                   f"```\n{failure}\n```\n")
     (directory / "packet-fix.md").write_text(packet)
     return fill_template(template(deps, "fix"), {
         **pull_values(pull, run), "accepted_findings": _accepted_lines(accepted), "contract": run.extra.get("contract", "(not stated)"),
@@ -88,19 +92,18 @@ def phase_verify(deps: Deps, run: Run) -> Run:
         run.extra["scripts_changed"] = sorted(touched_scripts)
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED, resume_state=RunState.VERIFYING)
     attempt_no = len([r for r in verification_repo.list_results(deps.conn, run.id) if r["pass_no"] == run.pass_no]) + 1
-    commands = list(repo_config.verification.format) + list(repo_config.verification.required)
-    env = project_env(deps, repo_config)
-    status, log, tree = _run_checks(deps, run, repo_config, env)
+    checks = _run_checks(deps, run, repo_config, project_env(deps, repo_config))
     log_path = directory / f"verify-{attempt_no}.log"
-    log_path.write_text(log)
-    verification_repo.add_result(deps.conn, run.id, run.pass_no, attempt_no, tree, commands, status, str(log_path), now(deps))
-    if status == "tree_changed":
+    log_path.write_text(checks.log)
+    verification_repo.add_result(deps.conn, run.id, run.pass_no, attempt_no, checks.tree, checks.commands, checks.status, str(log_path), now(deps))
+    if checks.status == "tree_changed":
         return pause(deps, run, PauseReason.UNEXPECTED_COMMIT, resume_state=RunState.VERIFYING)
-    if status == "unavailable":
+    if checks.status == "unavailable":
         return pause(deps, run, PauseReason.CHECKS_FAILED, resume_state=RunState.VERIFYING)
-    if status == "failed":
-        if attempt_no < run.budgets.max_fix_attempts:
-            run.extra[f"verify_failure_pass_{run.pass_no}"] = log[-4000:]
+    if checks.status == "failed":
+        # The budget is fix runs, so a verification that ran nothing never uses up the repair a later failure is owed.
+        if phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) < run.budgets.max_fix_attempts:
+            run.extra[f"verify_failure_pass_{run.pass_no}"] = checks.log[-4000:]
             return save(deps, run, RunState.FIXING)
         return pause(deps, run, PauseReason.CHECKS_FAILED, resume_state=RunState.VERIFYING)
     return _commit_and_push(deps, run, repo_config)
@@ -144,38 +147,65 @@ def _record_pushed(deps: Deps, run: Run, sha: str, pushed: bool = True) -> Run:
     return save(deps, run, RunState.PUBLISHING)
 
 
-def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> tuple[str, str, str]:
+@dataclass(frozen=True)
+class CheckOutcome:
+    """`commands` is what actually ran, so the record never claims a check that a failure before it skipped."""
+
+    status: str
+    log: str
+    tree: str
+    commands: list[list[str]]
+
+
+def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> CheckOutcome:
     """Formatting first, then the tree is hashed, the required checks run, and the tree is hashed again: the
-    checked tree is the one that gets committed. No required check run means unavailable, never passed."""
+    checked tree is the one that gets committed. No required check run means unavailable, never passed. A required
+    check that selected nothing hands over to the fallback, whose result then stands in its place."""
+    verification = repo_config.verification
     timeout = repo_config.review.timeouts_minutes.get("verify", 60) * 60
     log_parts: list[str] = []
-    for command in repo_config.verification.format:
-        if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), repo_config, log_parts) != "passed":
-            return "failed", "\n".join(log_parts), ""
+    ran: list[list[str]] = []
+    for command in verification.format:
+        ran.append(command)
+        if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), verification, log_parts) != "passed":
+            return CheckOutcome("failed", "\n".join(log_parts), "", ran)
     tree_before = deps.git.stage_all_and_tree_hash(run.worktree_path)
-    statuses = [_outcome(deps.process.run(command, cwd=run.worktree_path, env=pytest_check_env(command, run.worktree_path, env),
-                                          timeout_seconds=timeout), repo_config, log_parts)
-                for command in repo_config.verification.required]
+    statuses = _run_required(deps, run, verification.required, verification, env, timeout, log_parts, ran)
+    if _selected_nothing(statuses) and verification.fallback:
+        statuses = _run_required(deps, run, verification.fallback, verification, env, timeout, log_parts, ran)
     tree_after = deps.git.stage_all_and_tree_hash(run.worktree_path)
     log = "\n".join(log_parts)
     if tree_after != tree_before:
-        return "tree_changed", log + "\nthe working tree changed while the checks ran", tree_after
+        return CheckOutcome("tree_changed", log + "\nthe working tree changed while the checks ran", tree_after, ran)
     if "failed" in statuses:
-        return "failed", log, tree_after
-    if not statuses or "unavailable" in statuses:
-        return "unavailable", log or "no required checks are registered for this repository", tree_after
+        return CheckOutcome("failed", log, tree_after, ran)
+    if not statuses or any(status != "passed" for status in statuses):
+        return CheckOutcome("unavailable", log or "no required checks are registered for this repository", tree_after, ran)
     run.extra["verified_tree"] = tree_after
-    return "passed", log, tree_after
+    return CheckOutcome("passed", log, tree_after, ran)
 
 
-def _outcome(completed, repo_config, log_parts: list[str]) -> str:
+def _run_required(deps: Deps, run: Run, commands: list[list[str]], verification, env: dict[str, str], timeout: int,
+                  log_parts: list[str], ran: list[list[str]]) -> list[str]:
+    ran.extend(commands)
+    return [_outcome(deps.process.run(command, cwd=run.worktree_path, env=pytest_check_env(command, run.worktree_path, env),
+                                      timeout_seconds=timeout), verification, log_parts)
+            for command in commands]
+
+
+def _selected_nothing(statuses: list[str]) -> bool:
+    """Nothing failed or timed out, and at least one check said the change maps to no test it knows."""
+    return "nothing_selected" in statuses and all(status in ("passed", "nothing_selected") for status in statuses)
+
+
+def _outcome(completed, verification, log_parts: list[str]) -> str:
     log_parts.append(f"$ {' '.join(completed.argv)}\nexit {completed.exit_code}{' (timed out)' if completed.timed_out else ''}\n{completed.stdout}\n{completed.stderr}")
     if completed.timed_out:
         return "unavailable"
     if completed.exit_code == 0:
         return "passed"
-    if completed.exit_code in repo_config.verification.unavailable_exit_codes:
-        return "unavailable"
+    if completed.exit_code in verification.unavailable_exit_codes:
+        return "nothing_selected"
     return "failed"
 
 

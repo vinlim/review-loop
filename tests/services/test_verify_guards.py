@@ -134,3 +134,89 @@ def test_no_phase_request_and_no_project_command_carries_the_author_cli_login(se
     assert len(agent_requests) >= 3 and all("CLAUDE_CODE_OAUTH_TOKEN" not in r.env for r in agent_requests)
     project_calls = [c for c in h.process.calls if c["argv"][0] in ("bash", ".claude/run-tests.sh")]
     assert len(project_calls) >= 2 and all("CLAUDE_CODE_OAUTH_TOKEN" not in c["env"] for c in project_calls)
+
+
+# --- fallback: a check that selected nothing hands over to the registered full check --------------------
+
+FULL = [".claude/run-tests.sh", "full"]
+
+
+def with_fallback(settings, tmp_path, changed_exit_code=3, full_exit_code=0, changed_timed_out=False):
+    settings = with_verification(settings, fallback=[FULL])
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=changed_exit_code, stderr="nothing maps this change", timed_out=changed_timed_out)
+    h.process.script(FULL, exit_code=full_exit_code, stdout="Tests: 420 passed" if full_exit_code == 0 else "FAIL Tests\\Feature\\WindowTest")
+    return h
+
+
+def test_a_passing_fallback_verifies_a_fix_the_required_check_could_not_select_tests_for(settings, tmp_path):
+    h = with_fallback(settings, tmp_path)
+    run = to_verifying(h)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1
+    result = verification_repo.list_results(h.conn, run.id)[0]
+    assert result["status"] == "passed" and FULL in result["commands"]
+    log = open(result["log_path"]).read()
+    assert "$ .claude/run-tests.sh changed\nexit 3" in log and "$ .claude/run-tests.sh full\nexit 0" in log
+
+
+def test_a_failing_fallback_fails_verification_and_sends_the_fix_back_for_repair(settings, tmp_path):
+    h = with_fallback(settings, tmp_path, full_exit_code=1)
+    run = to_verifying(h)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.FIXING and h.git.pushes == []
+    assert verification_repo.list_results(h.conn, run.id)[0]["status"] == "failed"
+    assert "FAIL Tests" in run.extra["verify_failure_pass_1"]
+
+
+def test_a_required_check_that_timed_out_stays_unavailable_and_the_fallback_never_runs(settings, tmp_path):
+    h = with_fallback(settings, tmp_path, changed_exit_code=-1, changed_timed_out=True)
+    run = to_verifying(h)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    result = verification_repo.list_results(h.conn, run.id)[0]
+    assert result["status"] == "unavailable" and FULL not in result["commands"]
+    assert not any(call["argv"] == FULL for call in h.process.calls)
+
+
+# --- the repair budget counts fixes, not verifications that ran nothing ------------------------------------
+
+def test_a_verification_that_ran_nothing_does_not_use_up_the_repair_a_later_failure_is_owed(settings, tmp_path):
+    from review_loop.services import run_control
+
+    settings = with_verification(settings, fallback=[])
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=3, stderr="nothing maps this change")
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    h.deps.settings = with_verification(h.deps.settings, fallback=[FULL])
+    h.process.script(FULL, exit_code=1, stdout="FAIL Tests\\Architecture\\ProviderEpochTimezonePinArchTest")
+    resumed = run_control.resume(h.conn, run, h.clock).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.FIXING, "one fix ran, so one repair is still owed"
+    assert "ProviderEpochTimezonePinArchTest" in run.extra["verify_failure_pass_1"]
+
+
+def test_the_repair_request_lets_the_author_fix_a_failure_the_pr_already_had(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout="FAIL Tests\\Architecture\\ProviderEpochTimezonePinArchTest app/Casts/Instant.php:84")
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+
+    step(h.deps, run)
+
+    packet = (tmp_path / "runs" / run.id / "pass-1" / "packet-fix.md").read_text()
+    assert "app/Casts/Instant.php:84" in packet
+    assert "code the PR already had" in packet and "inside your scope" in packet

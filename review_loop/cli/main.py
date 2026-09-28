@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
+import traceback
 from pathlib import Path
 
 from review_loop.cli.container import Container, build_container, claim_claude_oauth_token, default_home
@@ -13,8 +16,10 @@ from review_loop.cli.render import render_show, render_status
 from review_loop.config.settings import ConfigError
 from review_loop.repositories import runs as runs_repo
 from review_loop.services import run_control
+from review_loop.services.locks import AlreadyLocked, RunLock
 from review_loop.services.start import StartRefusal, requested_mode, start_run
-from review_loop.types.run import PauseReason
+from review_loop.types.result import Err, Ok, Result
+from review_loop.types.run import WORKING_STATES, PauseReason
 
 
 def main(argv: list[str] | None = None, container: Container | None = None) -> int:
@@ -52,6 +57,7 @@ def _add_setup_commands(commands) -> None:
     add.add_argument("--remote", default="")
     add.add_argument("--author", default="")
     doctor = commands.add_parser("doctor", help="check CLIs, auth, schemas and config")
+    doctor.add_argument("--no-probe", action="store_true", help="skip the one-request probe of each configured agent")
     doctor.set_defaults(handler=command_doctor)
 
 
@@ -61,9 +67,19 @@ def _add_run_commands(commands) -> None:
     start.add_argument("--author-session", default="auto")
     start.add_argument("--no-run", action="store_true", help="enrol only; do not run phases")
     start.add_argument("--inspect-only", action="store_true", help="review and assess into files; publish nothing")
+    start.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
+    start.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent before the first phase")
     start.set_defaults(handler=command_start)
+    drive = commands.add_parser("drive", help="drive an enrolled run in this process (what --detach starts)")
+    drive.add_argument("run_id")
+    drive.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent; --detach passes this, having probed")
+    drive.set_defaults(handler=command_drive)
     status = commands.add_parser("status", help="list runs")
     status.set_defaults(handler=command_status)
+    wait = commands.add_parser("wait", help="follow a run another process drives until it stops")
+    wait.add_argument("run_id")
+    wait.add_argument("--interval", type=float, default=3.0, help="seconds between polls")
+    wait.set_defaults(handler=command_wait)
     show = commands.add_parser("show", help="show one run")
     show.add_argument("run_id")
     show.set_defaults(handler=command_show)
@@ -72,6 +88,8 @@ def _add_run_commands(commands) -> None:
         sub.add_argument("run_id")
         if name == "resume":
             sub.add_argument("--no-run", action="store_true")
+            sub.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
+            sub.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent before continuing")
         sub.set_defaults(handler=handler)
     align = commands.add_parser("align", help="optional override: settle disputed findings yourself")
     align.add_argument("run_id")
@@ -120,7 +138,12 @@ def command_repo_add(args) -> int:
 
 
 def command_doctor(args, box: Container) -> int:
-    checks = run_doctor(box.process, box.settings, box.schemas_dir)
+    from review_loop.cli.wiring import build_deps
+    from review_loop.services.preflight import Probing
+
+    probing = None if args.no_probe else Probing(agents=build_deps(box, inspect_only=False).agents, base_env=dict(os.environ),
+                                                 output_dir=box.settings.state_dir / "doctor")
+    checks = run_doctor(box.process, box.settings, box.schemas_dir, probing=probing)
     for check in checks:
         print(f"{'ok  ' if check.ok else 'FAIL'} {check.name}: {check.detail}")
     return 0 if all(check.ok for check in checks) else 1
@@ -152,9 +175,73 @@ def command_start(args, box: Container) -> int:
         print(f"run {run.id} ({run.state.value}, {run.mode()}) for {run.pr_url}")
         if args.no_run:
             return 0
-        return _drive(box, run, lock=lock)
+        if not args.no_preflight and _preflight(box, run):
+            return 1
+        if not args.detach:
+            return _drive(box, run, lock)
     finally:
         lock.release()
+    return _detach(box, run)
+
+
+def _preflight(box: Container, run) -> bool:
+    """Probe the run's agents before any phase; a failure pauses the run with the answers and returns True."""
+    from review_loop.cli.wiring import build_deps
+    from review_loop.services.preflight import failures, probe_agents
+
+    deps = build_deps(box, inspect_only=run.mode() == "inspect")
+    probes = probe_agents(deps.agents, box.settings.repositories[run.repo], state_dir=box.settings.state_dir, base_env=deps.base_env,
+                          output_dir=box.settings.state_dir / "runs" / run.id / "preflight", process=box.process)
+    failed = failures(probes)
+    if not failed:
+        return False
+    run.extra["preflight_failure"] = failed
+    _report_final(box, run_control.pause(box.conn, run, PauseReason.AGENT_UNAVAILABLE, box.clock))
+    return True
+
+
+def _detach(box: Container, run) -> int:
+    """A coordinator in its own session takes the run; the lock is free by now so the child can hold it. The claimed
+    Claude login travels only to that child, which claims it again for its own Claude adapter."""
+    log_path = box.settings.state_dir / "runs" / run.id / "coordinator.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, **({"CLAUDE_CODE_OAUTH_TOKEN": box.claude_oauth_token} if box.claude_oauth_token else {})}
+    argv = [sys.executable, "-m", "review_loop.cli.main", "drive", run.id, "--no-preflight"]  # this process probed, or was told not to
+    pid = box.spawn(argv, cwd=str(box.home), env=env, log_path=log_path)
+    print(f"coordinator pid {pid} drives it in its own session; log: {log_path}; follow with: review-loop wait {run.id}")
+    return 0
+
+
+def command_drive(args, box: Container) -> int:
+    claimed = _claim(box, args.run_id)
+    if not claimed.ok:
+        return claimed.error
+    run, lock = claimed.value
+    try:
+        if run.state not in WORKING_STATES:
+            hint = f"; resume it with `review-loop resume {run.id}`" if run.state.value == "paused" else ""
+            print(f"run {run.id} is {run.state.value}, not in a working state{hint}", file=sys.stderr)
+            return 2
+        if not args.no_preflight and _preflight(box, run):
+            return 1
+        return _drive(box, run, lock)
+    finally:
+        lock.release()
+
+
+def _claim(box: Container, run_id: str) -> Result[tuple, int]:
+    """The run as it stands once this process holds its lock, with the lock. What was read before the lock may have moved
+    or finished under another coordinator, so only the copy read after counts. The error is the exit code, already explained."""
+    run = _require_run(box, run_id)
+    if run is None:
+        return Err(2)
+    lock = _lock(box, run)
+    try:
+        lock.acquire()
+    except AlreadyLocked as error:
+        print(f"{error}; a coordinator is driving run {run.id}, follow it with `review-loop wait {run.id}`", file=sys.stderr)
+        return Err(3)
+    return Ok((runs_repo.get_run(box.conn, run_id), lock))
 
 
 def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspect_only: bool) -> str:
@@ -168,7 +255,8 @@ def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspe
 
 
 def command_status(args, box: Container) -> int:
-    print(render_status(runs_repo.list_runs(box.conn)))
+    runs = runs_repo.list_runs(box.conn)
+    print(render_status(runs, unattended={run.id for run in runs if _unattended(box, run)}))
     return 0
 
 
@@ -179,61 +267,103 @@ def command_show(args, box: Container) -> int:
     from review_loop.repositories import findings as findings_repo
 
     repo = box.settings.repositories.get(run.repo)
-    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None))
+    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None,
+                      unattended=_unattended(box, run)))
     return 0
+
+
+def command_wait(args, box: Container) -> int:
+    from review_loop.services.wait import wait_for_run
+
+    run = _require_run(box, args.run_id)
+    if run is None:
+        return 2
+    final = wait_for_run(box.conn, run.id, lock_held=lambda current: _lock(box, current).is_held(), sleep=time.sleep,
+                         on_step=_print_transition, interval_seconds=args.interval)
+    return _report_final(box, final)
+
+
+def _lock(box: Container, run) -> RunLock:
+    return RunLock(box.settings.state_dir, run.repo, run.pr_number)
+
+
+def _unattended(box: Container, run) -> bool:
+    """A run a coordinator should be driving, with no coordinator holding its lock."""
+    return run.state in WORKING_STATES and not _lock(box, run).is_held()
 
 
 def command_pause(args, box: Container) -> int:
     run = _require_run(box, args.run_id)
     if run is None:
         return 2
-    run_control.pause(box.conn, run, PauseReason.MANUAL, box.clock)
+    result = run_control.pause_by_hand(box.conn, run, box.clock)
+    if not result.ok:
+        print(f"run {run.id} is {result.error.state.value}; a finished run cannot be paused", file=sys.stderr)
+        return 2
     print(f"paused {run.id}")
     return 0
 
 
 def command_resume(args, box: Container) -> int:
-    run = _require_run(box, args.run_id)
-    if run is None:
-        return 2
-    result = run_control.resume(box.conn, run, box.clock)
-    if not result.ok:
-        print(result.error, file=sys.stderr)
-        return 2
-    print(f"resumed {run.id} at {result.value.state.value}")
-    if getattr(args, "no_run", False):
-        return 0
-    return _drive(box, result.value)
+    claimed = _claim(box, args.run_id)
+    if not claimed.ok:
+        return claimed.error
+    run, lock = claimed.value
+    try:
+        # With the lock held, a working state means no coordinator has this run: it continues from that state.
+        result = run_control.resume(box.conn, run, box.clock, unattended=run.state in WORKING_STATES)
+        if not result.ok:
+            print(result.error, file=sys.stderr)
+            return 2
+        print(f"resumed {run.id} at {result.value.state.value}")
+        if args.no_run:
+            return 0
+        if not args.no_preflight and _preflight(box, result.value):
+            return 1
+        if not args.detach:
+            return _drive(box, result.value, lock)
+    finally:
+        lock.release()
+    return _detach(box, result.value)
 
 
 def command_stop(args, box: Container) -> int:
     run = _require_run(box, args.run_id)
     if run is None:
         return 2
-    run_control.stop(box.conn, run, box.clock)
+    result = run_control.stop(box.conn, run, box.clock)
+    if not result.ok:
+        print(f"run {run.id} is {result.error.state.value}; a finished run cannot be stopped", file=sys.stderr)
+        return 2
     print(f"stopped {run.id}; the worktree and records are kept")
     return 0
 
 
-def _drive(box: Container, run, lock=None) -> int:
+def _drive(box: Container, run, lock: RunLock) -> int:
+    """Run the loop on a run this process has claimed; `lock` is held by the caller for the whole drive."""
     from review_loop.cli.wiring import build_deps
-    from review_loop.services.locks import AlreadyLocked, RunLock
     from review_loop.services.run_coordinator import run_loop
 
-    owned = lock is None
-    lock = lock or RunLock(box.settings.state_dir, run.repo, run.pr_number)
-    if owned:
-        try:
-            lock.acquire()
-        except AlreadyLocked as error:
-            print(str(error), file=sys.stderr)
-            return 3
     try:
         final = run_loop(build_deps(box, inspect_only=run.mode() == "inspect"), run, on_step=_print_transition)
-    finally:
-        if owned:
-            lock.release()
+    except Exception:  # noqa: BLE001 - a crash of any kind must leave a resumable, explained run behind
+        final = _pause_after_crash(box, run)
+    return _report_final(box, final)
+
+
+def _pause_after_crash(box: Container, run):
+    """The run stays where its last persisted transition left it, paused with the traceback for show; resume retries that phase."""
+    traceback.print_exc(file=sys.stderr)
+    current = runs_repo.get_run(box.conn, run.id) or run
+    current.extra["coordinator_failure"] = traceback.format_exc()[-4000:]
+    return run_control.pause(box.conn, current, PauseReason.COORDINATOR_FAILED, box.clock)
+
+
+def _report_final(box: Container, final) -> int:
+    """The closing line of a drive or a wait: the state the run is in, and 0 only for a complete run."""
     state = final.state.value + (f" ({final.pause_reason.value})" if final.pause_reason else "")
+    if _unattended(box, final):
+        state += " (no coordinator)"
     outcome = f", outcome {final.outcome.value}" if final.outcome else ""
     print(f"run {final.id}: {state}{outcome}; artifacts under {box.settings.state_dir / 'runs' / final.id}")
     return 0 if final.state.value in ("complete",) else 1
@@ -347,3 +477,7 @@ def command_inbox_status(args, box: Container) -> int:
     inbox_repo.set_status(box.conn, args.item_id, args.status, args.reference or args.reason, box.clock.now().isoformat())
     print(f"#{args.item_id} {args.status}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
