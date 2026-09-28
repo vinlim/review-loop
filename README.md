@@ -14,7 +14,9 @@ npm i -g @openai/codex            # uses the ChatGPT desktop login at ~/.codex/a
 .venv/bin/review-loop doctor
 ```
 
-`repo add` writes `~/.review-loop/config.toml`. Everything the tool produces lives under
+`repo add` writes `~/.review-loop/config.toml`. It registers `.claude/run-tests.sh` as the required
+check when the project has one, or pytest when the project configures it; a registration with no
+required check fails `doctor`, because a fix can never be verified without one. Everything the tool produces lives under
 `~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, verification logs,
 `report.md`), `worktrees/`, `logs/`.
 

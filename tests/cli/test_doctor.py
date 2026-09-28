@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 from review_loop.cli.container import TOOL_VERSION, tool_versions
@@ -56,6 +57,22 @@ def test_doctor_fails_when_a_registered_prepare_script_is_missing(settings, tmp_
 
     assert not checks["repository webapp"].ok
     assert ".claude/worktree-setup.sh" in checks["repository webapp"].detail
+
+
+def test_doctor_fails_a_repository_with_no_required_check_and_names_the_table_to_fill(settings):
+    repo = settings.repositories["webapp"]
+    empty = dataclasses.replace(repo, verification=dataclasses.replace(repo.verification, required=[]))
+    checks = {check.name: check for check in run_doctor(make(), dataclasses.replace(settings, repositories={"webapp": empty}), SCHEMAS)}
+
+    check = checks["repository webapp verification"]
+    assert not check.ok
+    assert "a fix can never be verified" in check.detail and "[repositories.webapp.verification]" in check.detail
+
+
+def test_doctor_lists_the_required_checks_when_there_are_some(settings):
+    checks = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}
+
+    assert checks["repository webapp verification"].ok and ".claude/run-tests.sh changed" in checks["repository webapp verification"].detail
 
 
 def test_doctor_checks_only_the_agents_the_repositories_configure(settings):

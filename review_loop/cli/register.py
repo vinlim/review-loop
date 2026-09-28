@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import configparser
 import json
+import sys
+import tomllib
 from pathlib import Path
 
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
@@ -15,7 +18,7 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
     has_setup = (local_path / ".claude" / "worktree-setup.sh").exists()
     has_runner = (local_path / ".claude" / "run-tests.sh").exists()
     prepare = [["bash", ".claude/worktree-setup.sh"]] if has_setup else []
-    required = [[".claude/run-tests.sh", "changed"]] if has_runner else []
+    required = _required_checks(local_path, has_runner)
     format_commands = [["vendor/bin/pint", "--dirty", "--format", "agent"]] if (local_path / "pint.json").exists() else []
     instruction_files = [f for f in ("CLAUDE.md", "AGENTS.md", "PROJECT.md") if (local_path / f).exists()]
     sanitize = LARAVEL_SANITIZED_ENV if (local_path / "artisan").exists() else []
@@ -59,6 +62,40 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
         "",
     ]
     return "\n".join(lines)
+
+
+def _required_checks(local_path: Path, has_runner: bool) -> list[list[str]]:
+    """The project's own runner wins; a Python project that configures pytest gets pytest."""
+    if has_runner:
+        return [[".claude/run-tests.sh", "changed"]]
+    if _configures_pytest(local_path):
+        return [[_python_interpreter(local_path), "-m", "pytest", "-q"]]
+    return []
+
+
+def _configures_pytest(local_path: Path) -> bool:
+    if (local_path / "pytest.ini").exists():
+        return True
+    pyproject = local_path / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            data = tomllib.loads(pyproject.read_text())
+        except tomllib.TOMLDecodeError:
+            data = {}
+        if "ini_options" in data.get("tool", {}).get("pytest", {}):
+            return True
+    setup_cfg = local_path / "setup.cfg"
+    if setup_cfg.exists():
+        parser = configparser.ConfigParser()
+        parser.read(setup_cfg)
+        return parser.has_section("tool:pytest")
+    return False
+
+
+def _python_interpreter(local_path: Path) -> str:
+    """Absolute, because the check runs in a tool worktree that has no .venv of its own."""
+    venv_python = local_path / ".venv" / "bin" / "python"
+    return str(venv_python) if venv_python.exists() else sys.executable
 
 
 def append_registration(config_path: Path, registration: str, state_dir: Path) -> None:
