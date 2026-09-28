@@ -296,7 +296,10 @@ def command_pause(args, box: Container) -> int:
     run = _require_run(box, args.run_id)
     if run is None:
         return 2
-    run_control.pause(box.conn, run, PauseReason.MANUAL, box.clock)
+    result = run_control.pause_by_hand(box.conn, run, box.clock)
+    if not result.ok:
+        print(f"run {run.id} is {result.error.state.value}; a finished run cannot be paused", file=sys.stderr)
+        return 2
     print(f"paused {run.id}")
     return 0
 
@@ -328,7 +331,10 @@ def command_stop(args, box: Container) -> int:
     run = _require_run(box, args.run_id)
     if run is None:
         return 2
-    run_control.stop(box.conn, run, box.clock)
+    result = run_control.stop(box.conn, run, box.clock)
+    if not result.ok:
+        print(f"run {run.id} is {result.error.state.value}; a finished run cannot be stopped", file=sys.stderr)
+        return 2
     print(f"stopped {run.id}; the worktree and records are kept")
     return 0
 

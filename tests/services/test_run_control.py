@@ -172,7 +172,7 @@ def test_a_stop_keeps_the_progress_and_history_the_coordinator_persisted_after_t
     stale = runs_repo.get_run(conn, run.id)
     coordinator_advanced(conn, run)
 
-    returned = stop(conn, stale, FakeClock())
+    returned = stop(conn, stale, FakeClock()).value
 
     stored = runs_repo.get_run(conn, run.id)
     assert (stored.state, stored.pause_reason, stored.resume_state) == (RunState.CANCELLED, None, None)
@@ -188,3 +188,41 @@ def test_a_manual_pause_on_an_already_paused_run_keeps_where_it_will_resume():
 
     stored = runs_repo.get_run(conn, run.id)
     assert (stored.pause_reason, stored.resume_state) == (PauseReason.MANUAL, RunState.VERIFYING)
+
+
+# --- a finished run stays finished: a person's pause or stop applies only to a working or paused run -----------
+
+def test_a_stop_on_a_complete_run_is_not_applied_and_keeps_its_outcome():
+    from review_loop.types.run import Outcome
+
+    conn, run = make(RunState.COMPLETE)
+    run.outcome = Outcome.COMPLETE_WITH_EXCEPTIONS
+    runs_repo.save_run(conn, run)
+
+    result = stop(conn, runs_repo.get_run(conn, run.id), FakeClock())
+
+    assert not result.ok and result.error.state == RunState.COMPLETE
+    stored = runs_repo.get_run(conn, run.id)
+    assert (stored.state, stored.outcome) == (RunState.COMPLETE, Outcome.COMPLETE_WITH_EXCEPTIONS)
+
+
+def test_a_manual_pause_on_a_stopped_run_is_not_applied_so_the_run_never_counts_as_active_again():
+    from review_loop.services.run_control import pause_by_hand
+
+    conn, run = make()
+    stop(conn, run, FakeClock())
+
+    result = pause_by_hand(conn, runs_repo.get_run(conn, run.id), FakeClock())
+
+    assert not result.ok and result.error.state == RunState.CANCELLED
+    assert runs_repo.get_run(conn, run.id).state == RunState.CANCELLED
+    assert runs_repo.find_active_run(conn, "webapp", 1004) is None
+
+
+def test_a_stop_on_a_paused_run_applies():
+    conn, run = make()
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    result = stop(conn, runs_repo.get_run(conn, run.id), FakeClock())
+
+    assert result.ok and result.value.state == RunState.CANCELLED

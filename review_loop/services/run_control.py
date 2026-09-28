@@ -15,9 +15,10 @@ def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock)
     since the caller read the run, and that progress is kept. A coordinator's pause writes its own copy, which is the
     latest under its lock, but never undoes a stop or a manual pause that landed meanwhile: the persisted run comes back
     instead, so the caller reports the state that stands."""
-    at = clock.now().isoformat()
     if reason == PauseReason.MANUAL:
-        return runs_repo.pause_manually(conn, run.id, at)
+        result = pause_by_hand(conn, run, clock)
+        return result.value if result.ok else result.error
+    at = clock.now().isoformat()
     if run.state != RunState.PAUSED:
         run.resume_state = run.state
     run.state = RunState.PAUSED
@@ -49,9 +50,17 @@ def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = 
     return Err(f"run {run.id} changed while resuming: it is now {current.state.value}{reason}")
 
 
-def stop(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:
-    """Cancels through the control columns alone, so the run's progress and history stay as the coordinator last wrote them."""
-    return runs_repo.cancel(conn, run.id, clock.now().isoformat())
+def pause_by_hand(conn: sqlite3.Connection, run: Run, clock: Clock) -> Result[Run, Run]:
+    """A person's pause, through the control columns alone. A finished run is not paused: the error carries the run as it stands."""
+    applied, current = runs_repo.pause_manually(conn, run.id, clock.now().isoformat())
+    return Ok(current) if applied else Err(current)
+
+
+def stop(conn: sqlite3.Connection, run: Run, clock: Clock) -> Result[Run, Run]:
+    """Cancels through the control columns alone, so progress and history stay as the coordinator last wrote them. A
+    finished run keeps its outcome: the error carries the run as it stands."""
+    applied, current = runs_repo.cancel(conn, run.id, clock.now().isoformat())
+    return Ok(current) if applied else Err(current)
 
 
 def _save(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:

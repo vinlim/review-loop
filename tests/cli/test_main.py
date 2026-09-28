@@ -174,3 +174,34 @@ def test_wait_exits_zero_for_a_complete_run_and_two_for_an_unknown_one(settings,
     assert main(["wait", run.id, "--interval", "0"], container=box) == 0
     assert f"run {run.id}: complete" in capsys.readouterr().out
     assert main(["wait", "nope", "--interval", "0"], container=box) == 2
+
+
+def test_pause_refuses_a_stopped_run_naming_its_state_and_a_later_start_gets_a_fresh_run(settings, capsys):
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    main(["stop", run_id], container=box)
+    capsys.readouterr()
+
+    assert main(["pause", run_id], container=box) == 2
+
+    assert "is cancelled" in capsys.readouterr().err
+    assert runs_repo.get_run(box.conn, run_id).state.value == "cancelled"
+    assert main(["start", URL, "--no-run"], container=box) == 0
+    assert len(runs_repo.list_runs(box.conn)) == 2
+
+
+def test_stop_refuses_a_complete_run_naming_its_state(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.COMPLETE
+    runs_repo.save_run(box.conn, run)
+    capsys.readouterr()
+
+    assert main(["stop", run.id], container=box) == 2
+
+    assert "is complete" in capsys.readouterr().err
+    assert runs_repo.get_run(box.conn, run.id).state == RunState.COMPLETE
