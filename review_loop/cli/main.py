@@ -1,4 +1,4 @@
-"""review-loop: drive a Codex reviewer and a Claude author through pull request review rounds."""
+"""review-loop: drive a reviewer agent and an author agent (Codex and Claude by default) through pull request review rounds."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None, container: Container | None = None) -> i
     try:
         box = container or build_container(claude_oauth_token=claude_oauth_token)
     except ConfigError as error:
-        print(f"config error: {error}\nRegister a repository first: review-loop repo add <path>", file=sys.stderr)
+        print(f"config error: {error}", file=sys.stderr)
         return 2
     return args.handler(args, box)
 
@@ -178,7 +178,8 @@ def command_show(args, box: Container) -> int:
         return 2
     from review_loop.repositories import findings as findings_repo
 
-    print(render_show(run, findings_repo.list_findings(box.conn, run.id)))
+    repo = box.settings.repositories.get(run.repo)
+    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None))
     return 0
 
 

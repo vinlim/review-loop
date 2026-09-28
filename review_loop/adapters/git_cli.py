@@ -47,7 +47,7 @@ class GitCli:
                                "clearing push URLs inherited from the shared config needs git 2.46 or newer")
 
     def changed_files(self, repo_path: str, base: str, head: str) -> list[str]:
-        return self._git(repo_path, "diff", "--name-only", f"{base}..{head}").splitlines()
+        return _names(self._git_raw(repo_path, "diff", "--name-only", "-z", f"{base}..{head}"))
 
     def diff(self, repo_path: str, base: str, head: str) -> str:
         return self._git(repo_path, "diff", f"{base}..{head}") + "\n"
@@ -69,12 +69,19 @@ class GitCli:
         completed = self.process.run(["git", "rev-parse", f"{sha}:{file}"], cwd=path, env=self.env, timeout_seconds=self.timeout_seconds)
         return completed.stdout.strip() if completed.exit_code == 0 else ""
 
+    def paths_differing_from(self, path: str, base: str, pathspecs: list[str]) -> list[str]:
+        """Tracked paths whose working-tree content differs from base, and every untracked path, ignored ones included,
+        limited to pathspecs."""
+        tracked = self._git_raw(path, "diff", "--name-only", "-z", base, "--", *pathspecs)
+        untracked = self._git_raw(path, "ls-files", "--others", "-z", "--", *pathspecs)
+        return _names(tracked + untracked)
+
     def working_changed_files(self, path: str) -> list[str]:
-        files = []
-        for line in self._git(path, "status", "--porcelain", "--untracked-files=all").splitlines():
-            entry = line[3:]
-            files.append(entry.split(" -> ")[-1] if " -> " in entry else entry)
-        return files
+        """Tracked paths that differ from HEAD, staged or not, both sides of a move included, and untracked paths git
+        does not ignore."""
+        tracked = self._git_raw(path, "diff", "--name-only", "-z", "--no-renames", "HEAD", "--")
+        untracked = self._git_raw(path, "ls-files", "--others", "--exclude-standard", "-z", "--")
+        return _names(tracked + untracked)
 
     def stage_all_and_tree_hash(self, path: str) -> str:
         self._git(path, "add", "-A")
@@ -121,7 +128,16 @@ class GitCli:
         return listed[0] if listed else ""
 
     def _git(self, cwd: str, *args: str) -> str:
+        return self._git_raw(cwd, *args).strip()
+
+    def _git_raw(self, cwd: str, *args: str) -> str:
         completed = self.process.run(["git", *args], cwd=cwd, env=self.env, timeout_seconds=self.timeout_seconds)
         if completed.exit_code != 0:
             raise RuntimeError(f"git {' '.join(args)} in {cwd} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
-        return completed.stdout.strip()
+        return completed.stdout
+
+
+def _names(output: str) -> list[str]:
+    """Paths from a -z listing, read unstripped: line output quotes unusual names, and stripping trims whitespace a
+    name may start or end with."""
+    return [name for name in output.split("\0") if name]

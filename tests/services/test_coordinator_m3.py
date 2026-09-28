@@ -1,4 +1,7 @@
+import dataclasses
 import json
+import os
+from pathlib import Path
 
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import runs as runs_repo
@@ -6,8 +9,9 @@ from review_loop.repositories import verification as verification_repo
 from review_loop.services.run_coordinator import run_loop, step
 from review_loop.types.result import Err
 from review_loop.types.run import PauseReason, RunState
+from tests.fakes.agent import FakeAgent
 from tests.fakes.notifier import FakeNotifier
-from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness
+from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness, with_review
 
 LOGGER = "services/notifier/src/logger.ts"
 NUMBERS = "app/Support/JsonNumbers.php"
@@ -67,6 +71,24 @@ def to_publishing(h):
 
 
 # --- fix ------------------------------------------------------------------------------------------
+
+def test_after_a_switch_of_author_agent_the_new_agent_starts_fresh_then_resumes_its_own_session(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    opencode = FakeAgent()
+    h.deps.agents["opencode"] = opencode
+    h.deps.settings = with_review(h.deps.settings, author="opencode", author_model="", author_effort="")
+    opencode.reply(ASSESS_984, session_id="ses-opencode")
+    opencode.reply(FIX)
+
+    step(h.deps, step(h.deps, run))
+
+    assess, fix = opencode.requests
+    assert assess.resume_session_id == "" and "no session memory" in assess.prompt
+    assert fix.resume_session_id == "ses-opencode"
+
 
 def test_the_fix_request_carries_only_accepted_findings_the_contract_and_write_access(settings, tmp_path):
     h = harness(settings, tmp_path)
@@ -129,6 +151,39 @@ def test_passing_checks_commit_without_trailers_push_with_the_expected_parent_an
     assert results[0]["status"] == "passed" and results[0]["commands"] == [[".claude/run-tests.sh", "changed"]]
     check_call = next(call for call in h.process.calls if call["argv"] == [".claude/run-tests.sh", "changed"])
     assert check_call["cwd"] == run.worktree_path and "DB_URL" not in check_call["env"]
+
+
+def test_a_pytest_check_runs_with_the_worktree_leading_pythonpath_so_its_child_processes_test_the_worktree(settings, tmp_path):
+    repo = settings.repositories["webapp"]
+    pytest_check = ["/opt/venv/bin/python", "-m", "pytest", "-q"]
+    verification = dataclasses.replace(repo.verification, required=[pytest_check])
+    h = harness(dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, verification=verification)}), tmp_path)
+    h.process.script(pytest_check[:3], stdout="5 passed")
+    run = to_verifying(h)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PUBLISHING
+    check_call = next(call for call in h.process.calls if call["argv"] == pytest_check)
+    assert check_call["env"]["PYTHONPATH"].split(os.pathsep)[0].startswith(run.worktree_path)
+
+
+def test_a_pytest_config_the_coordinator_cannot_read_still_runs_the_check_for_pytest_to_judge(settings, tmp_path):
+    repo = settings.repositories["webapp"]
+    pytest_check = ["/opt/venv/bin/python", "-m", "pytest", "-q"]
+    verification = dataclasses.replace(repo.verification, required=[pytest_check])
+    h = harness(dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, verification=verification)}), tmp_path)
+    h.process.script(pytest_check[:3], stdout="5 passed")
+    run = to_verifying(h)
+    worktree = Path(run.worktree_path)
+    worktree.mkdir(parents=True, exist_ok=True)
+    (worktree / "pyproject.toml").write_text("[tool.pytest.ini_options]\npythonpath = 5\n")
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PUBLISHING
+    check_call = next(call for call in h.process.calls if call["argv"] == pytest_check)
+    assert check_call["env"]["PYTHONPATH"].split(os.pathsep)[0] == run.worktree_path
 
 
 def test_failing_checks_send_the_run_back_to_fix_once_then_pause(settings, tmp_path):

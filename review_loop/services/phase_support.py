@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import os
 import sqlite3
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -19,7 +22,7 @@ from review_loop.repositories import runs as runs_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services import run_control
 from review_loop.services.workspace import ensure_shims
-from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
+from review_loop.types.agents import AGENT_PROFILES, AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.findings import Finding
 from review_loop.types.pull_request import PullRef, PullRequest
 from review_loop.types.result import Err, Ok, Result
@@ -39,27 +42,55 @@ class Deps:
     github: Any
     process: Any
     clock: Any
-    reviewer: Any
-    author: Any
+    agents: dict[str, Any]
     prompts_dir: Path
     schemas_dir: Path
     base_env: dict[str, str]
     runs_dir: Path
-    find_author_session: Callable[[str], str]
+    find_author_session: Callable[[str, str, str], str]
     inspect_only: bool = False
     notifier: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: int, state: RunState,
+def author_resume(run: Run, repo_config: RepositoryConfig) -> str:
+    """The author session to resume. A session belongs to the CLI that made it, so after the author agent changes
+    mid-run the new one starts fresh instead of failing on every resume."""
+    owner = run.extra.get("author_session_agent") or (run.agents["author"].agent if "author" in run.agents else repo_config.review.author)
+    return run.author_session if owner == repo_config.review.author else ""
+
+
+def keep_author_session(run: Run, repo_config: RepositoryConfig, session_id: str) -> None:
+    if session_id:
+        run.author_session, run.extra["author_session_agent"] = session_id, repo_config.review.author
+
+
+def run_agent(deps: Deps, run: Run, agent_name: str, request: PhaseRequest, pass_no: int, state: RunState,
               validate: Callable[[dict], Result] | None = None) -> Result[PhaseOutput, PauseReason]:
     """Two attempts for retryable failures of a read-only phase; a write phase gets one, because a second run
-    on a partially edited workspace is never safe. A usage or auth failure pauses at once."""
-    attempts = 1 if request.tools_policy == "write" else 2
+    on a partially edited workspace is never safe. A usage or auth failure pauses at once.
+
+    An agent never starts on a checkout whose PR or fix changed a file its CLI runs at startup, since that code
+    runs outside the agent's permissions. A read-only phase that moved HEAD, changed the working tree or wrote to
+    a directory it may only read pauses whatever the agent returned: not every CLI can be held to read-only by its
+    flags, so the coordinator checks the outcome itself."""
+    untrusted = startup_changes(deps, run, agent_name, request.cwd)
+    if untrusted:
+        run.extra["scripts_changed"] = untrusted
+        return Err(PauseReason.SCRIPTS_CHANGED)
+    agent = deps.agents[agent_name]
+    read_only = request.tools_policy != "write"
+    attempts = 2 if read_only else 1
     for attempt in range(1, attempts + 1):
         attempt_request = dataclasses.replace(request, output_dir=str(Path(request.output_dir) / f"attempt-{attempt}"))
+        before = read_only_state(deps, attempt_request) if read_only else None
         attempt_id = phases_repo.record_attempt(deps.conn, run.id, request.phase, pass_no, attempt, now(deps), input_path=attempt_request.output_dir)
         result = agent.run(attempt_request)
+        breach = read_only_breach(deps, attempt_request, before) if read_only else ""
+        if breach:
+            phases_repo.finish_attempt(deps.conn, attempt_id, "failed", now(deps),
+                                       error={"kind": PauseReason.READ_ONLY_VIOLATED, "detail": breach})
+            return Err(PauseReason.READ_ONLY_VIOLATED)
         if result.ok and validate is not None:
             check = validate(result.value.data)
             if not check.ok:
@@ -73,6 +104,88 @@ def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: 
         if result.error.kind not in RETRYABLE:
             break
     return Err(PauseReason.AGENT_FAILED)
+
+
+@dataclass(frozen=True)
+class ReadOnlyState:
+    """What a read-only phase must leave as it found it, each file fingerprinted: the worktree's HEAD and every path
+    git reports as changed or untracked, and every file in the directories the agent is granted for reading apart
+    from the attempt's own output directory, where the adapter writes. Earlier attempts' output is compared like
+    anything else. Ignored files are not."""
+
+    head: str
+    worktree: dict[str, str]
+    granted: dict[str, str]
+
+
+def read_only_state(deps: Deps, request: PhaseRequest) -> ReadOnlyState:
+    worktree = {name: fingerprint(Path(request.cwd) / name) for name in deps.git.working_changed_files(request.cwd)}
+    granted: dict[str, str] = {}
+    for directory in request.read_dirs:
+        granted.update(_granted_fingerprints(Path(directory), skip=Path(request.output_dir)))
+    return ReadOnlyState(deps.git.head_sha(request.cwd), worktree, granted)
+
+
+def read_only_breach(deps: Deps, request: PhaseRequest, before: ReadOnlyState) -> str:
+    """Why the state no longer matches the one before a read-only phase, or "" when it does. State that can no longer
+    be read counts: the agent may have removed or rewritten the worktree's .git, or left something still writing."""
+    try:
+        after = read_only_state(deps, request)
+    except (RuntimeError, OSError) as error:
+        return f"the worktree or a granted directory cannot be inspected after a read-only phase: {error}"
+    if after.head != before.head:
+        return "HEAD moved during a read-only phase"
+    if changed := _differences(before.worktree, after.worktree):
+        return f"the worktree changed during a read-only phase: {changed}"
+    if changed := _differences(before.granted, after.granted):
+        return f"a directory the agent may only read changed during a read-only phase: {changed}"
+    return ""
+
+
+def fingerprint(path: Path) -> str:
+    """Content, mode and symlink target, so rewriting a file that was already changed still shows. A file its owner
+    cannot read is fingerprinted as such, so a chmod shows as a changed mode instead of stopping the comparison."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    if stat.S_ISLNK(info.st_mode):
+        return f"link {os.readlink(path)}"
+    if not stat.S_ISREG(info.st_mode):
+        return f"mode {info.st_mode:o}"
+    try:
+        with path.open("rb") as handle:
+            return f"{info.st_mode:o} {hashlib.file_digest(handle, 'sha256').hexdigest()}"
+    except PermissionError:
+        return f"{info.st_mode:o} unreadable"
+
+
+def _granted_fingerprints(directory: Path, skip: Path) -> dict[str, str]:
+    """Every file and symlink under directory, keyed by its path from the directory's parent, never following a link
+    or entering skip. A directory that cannot be listed is recorded as such, so hiding a subtree still shows."""
+    found: dict[str, str] = {}
+    unlistable: list[OSError] = []
+    for root, dirs, files in os.walk(directory, onerror=unlistable.append):
+        dirs[:] = [name for name in dirs if Path(root, name) != skip]
+        for path in [Path(root, name) for name in files] + [Path(root, name) for name in dirs if Path(root, name).is_symlink()]:
+            found[str(path.relative_to(directory.parent))] = fingerprint(path)
+    for error in unlistable:
+        found[str(Path(error.filename).relative_to(directory.parent))] = f"unlistable: {error.strerror}"
+    return found
+
+
+def _differences(before: dict[str, str], after: dict[str, str]) -> str:
+    changed = sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
+    return ", ".join(changed[:10]) + (f" and {len(changed) - 10} more" if len(changed) > 10 else "")
+
+
+def startup_changes(deps: Deps, run: Run, agent_name: str, path: str) -> list[str]:
+    """Files the PR or a fix changed, or anything wrote untracked, that this agent's CLI would load and run at startup."""
+    profile = AGENT_PROFILES[agent_name]
+    if not profile.startup_files:
+        return []
+    changed = deps.git.paths_differing_from(path, run.merge_base_sha, profile.startup_roots())
+    return sorted({changed_path for changed_path in changed if profile.runs_at_startup(changed_path)})
 
 
 def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: str, schema: str, output_dir: Path, policy: str,

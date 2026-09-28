@@ -10,7 +10,9 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
+from review_loop.services.pytest_checks import is_pytest_check
 from review_loop.services.state_dir import readable_by_others
+from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import ProcessRunner
 
 EXPECTED_SCHEMAS = ("review", "assessment", "fix", "alignment", "arbitration")
@@ -24,9 +26,11 @@ class Check:
 
 
 def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path) -> list[Check]:
-    checks = [_python(), _claude(process), _codex(process), _codex_login(process), _gh(process), _schemas(schemas_dir), _config(settings),
-              _state_dir(settings)]
+    agents = settings.agents()
+    checks = [_python(), *(_agent(process, name) for name in agents), *([_codex_login(process)] if "codex" in agents else []),
+              _gh(process), _schemas(schemas_dir), _config(settings), _state_dir(settings)]
     checks.extend(_repository(repo) for repo in settings.repositories.values())
+    checks.extend(_verification(process, repo) for repo in settings.repositories.values())
     checks.extend(_worktree_config(process, repo) for repo in settings.repositories.values())
     return checks
 
@@ -37,18 +41,12 @@ def _python() -> Check:
     return Check("python", ok, version if ok else f"{version} is too old; review-loop needs Python 3.11 or newer")
 
 
-def _claude(process: ProcessRunner) -> Check:
-    completed = _run(process, ["claude", "--version"])
+def _agent(process: ProcessRunner, name: str) -> Check:
+    profile = AGENT_PROFILES[name]
+    completed = _run(process, [profile.binary, "--version"])
     if completed.exit_code != 0:
-        return Check("claude", False, "claude not found on PATH; install Claude Code, then run `claude` once to log in")
-    return Check("claude", True, completed.stdout.strip())
-
-
-def _codex(process: ProcessRunner) -> Check:
-    completed = _run(process, ["codex", "--version"])
-    if completed.exit_code != 0:
-        return Check("codex", False, "codex not found on PATH; install with `npm i -g @openai/codex`, then run `codex login status`")
-    return Check("codex", True, completed.stdout.strip())
+        return Check(name, False, f"{profile.binary} not found on PATH; {profile.install_hint}")
+    return Check(name, True, completed.stdout.strip())
 
 
 def _codex_login(process: ProcessRunner) -> Check:
@@ -101,6 +99,16 @@ def _repository(repo) -> Check:
     if missing:
         return Check(f"repository {repo.name}", False, f"registered commands reference files missing under {repo.local_path}: {', '.join(missing)}")
     return Check(f"repository {repo.name}", True, f"{repo.local_path}")
+
+
+def _verification(process: ProcessRunner, repo) -> Check:
+    name = f"repository {repo.name} verification"
+    if not repo.verification.required:
+        return Check(name, False, f"no required check; a fix can never be verified. Add `required` under `[repositories.{repo.name}.verification]`")
+    for command in repo.verification.required:
+        if is_pytest_check(command) and _run(process, [command[0], "-c", "import pytest"]).exit_code != 0:
+            return Check(name, False, f"{command[0]} cannot import pytest; install it with `{command[0]} -m pip install pytest`")
+    return Check(name, True, "; ".join(" ".join(command) for command in repo.verification.required))
 
 
 def _worktree_config(process: ProcessRunner, repo) -> Check:

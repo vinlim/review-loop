@@ -13,9 +13,10 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import phases as phases_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
-    Deps, apply_events, decisions, events_by_finding, instruction_files, now, pass_dir, pause, project_env, pull_values, ref, remote_head,
-    repo, request, run_agent, save, template, verification_lines,
+    Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
+    project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
+from review_loop.services.pytest_checks import pytest_check_env
 from review_loop.services.workspace import registered_script_files
 from review_loop.types.result import Err, Ok, Result
 from review_loop.types.run import PauseReason, Run, RunState
@@ -33,11 +34,11 @@ def phase_fix(deps: Deps, run: Run) -> Run:
     prompt = _fix_prompt(deps, run, repo_config, directory, accepted)
     attempt = phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) + 1
     phase_request = request(deps, repo_config, run, "fix", prompt, "fix", directory / f"fix-{attempt}", "write",
-                            repo_config.review.author_model, repo_config.review.author_effort, resume=run.author_session)
-    outcome = run_agent(deps, run, deps.author, phase_request, run.pass_no, state=RunState.FIXING)
+                            repo_config.review.author_model, repo_config.review.author_effort, resume=author_resume(run, repo_config))
+    outcome = run_agent(deps, run, repo_config.review.author, phase_request, run.pass_no, state=RunState.FIXING)
     if not outcome.ok:
         return pause(deps, run, outcome.error)
-    run.author_session = outcome.value.session_id or run.author_session
+    keep_author_session(run, repo_config, outcome.value.session_id)
     _record_fix_output(deps, run, outcome.value.data, accepted)
     return save(deps, run, RunState.VERIFYING)
 
@@ -152,7 +153,8 @@ def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> tuple
         if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), repo_config, log_parts) != "passed":
             return "failed", "\n".join(log_parts), ""
     tree_before = deps.git.stage_all_and_tree_hash(run.worktree_path)
-    statuses = [_outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), repo_config, log_parts)
+    statuses = [_outcome(deps.process.run(command, cwd=run.worktree_path, env=pytest_check_env(command, run.worktree_path, env),
+                                          timeout_seconds=timeout), repo_config, log_parts)
                 for command in repo_config.verification.required]
     tree_after = deps.git.stage_all_and_tree_hash(run.worktree_path)
     log = "\n".join(log_parts)

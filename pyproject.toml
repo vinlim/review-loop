@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "review-loop"
 version = "0.1.0"
-description = "Drives a Codex reviewer and a Claude author through pull request review rounds"
+description = "Drives a reviewer agent and an author agent through pull request review rounds"
 requires-python = ">=3.11"
 dependencies = ["jsonschema>=4"]
 

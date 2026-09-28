@@ -8,6 +8,7 @@ class FakeAgent:
     def __init__(self, outputs=None):
         self.outputs = list(outputs or [])
         self.requests: list[PhaseRequest] = []
+        self.on_run = None
 
     def reply(self, data: dict, session_id: str = "sess-fake") -> None:
         self.outputs.append(Ok(PhaseOutput(data, session_id, "/fake/result.json", "/fake/events.jsonl")))
@@ -17,6 +18,8 @@ class FakeAgent:
 
     def run(self, request: PhaseRequest):
         self.requests.append(request)
+        if self.on_run is not None:
+            self.on_run(request)
         if not self.outputs:
             raise AssertionError(f"FakeAgent has no output left for phase {request.phase}")
         return self.outputs.pop(0)

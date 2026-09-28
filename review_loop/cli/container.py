@@ -15,6 +15,7 @@ from review_loop.adapters.process import SubprocessRunner
 from review_loop.config.settings import Settings, load_settings
 from review_loop.repositories.db import connect, migrate
 from review_loop.services.state_dir import ensure_private_dir
+from review_loop.types.agents import AGENT_PROFILES
 
 TOOL_VERSION = "0.1.0"
 
@@ -64,12 +65,12 @@ def build_container(home: Path | None = None, claude_oauth_token: str = "") -> C
     env = dict(os.environ)
     return Container(settings=settings, conn=conn, process=process, git=GitCli(process, env),
                      github=GhGitHub(process, cwd=str(home), env=env), clock=SystemClock(),
-                     versions=tool_versions(process, env), home=home, claude_oauth_token=claude_oauth_token)
+                     versions=tool_versions(process, env, settings), home=home, claude_oauth_token=claude_oauth_token)
 
 
-def tool_versions(process: SubprocessRunner, env: dict[str, str]) -> dict[str, str]:
+def tool_versions(process: SubprocessRunner, env: dict[str, str], settings: Settings) -> dict[str, str]:
     versions = {"review-loop": TOOL_VERSION}
-    for tool in ("claude", "codex", "gh"):
+    for tool in (*(AGENT_PROFILES[name].binary for name in settings.agents()), "gh"):
         completed = process.run([tool, "--version"], cwd=str(Path.home()), env=env, timeout_seconds=30)
         versions[tool] = completed.stdout.strip().splitlines()[0] if completed.exit_code == 0 and completed.stdout.strip() else "missing"
     return versions

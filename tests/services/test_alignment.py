@@ -3,7 +3,7 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.services.run_coordinator import step
 from review_loop.types.run import RunState
 from tests.services.test_coordinator_m3 import REJECTIONS, harness, verified
-from tests.services.test_coordinator_phases import APPROVE, REVIEW_984
+from tests.services.test_coordinator_phases import APPROVE, REVIEW_984, with_review
 
 NOTE = {"oscillating": True, "design_gap": False, "contract": "The PR owns URL scrubbing.", "invariant": "No credential survives scrubbing.",
         "conflicting_recommendations": "Scrub once versus scrub per token.", "evidence": "logger.ts:26", "alternatives": ["scrub per token"],
@@ -145,6 +145,56 @@ def test_a_needs_alignment_disposition_runs_the_exchange_too(settings, tmp_path)
     run = step(h.deps, run)
 
     assert run.state == RunState.FIXING and h.findings()["R1-F1"].state == "accepted"
+
+
+SPLIT = {"decision": "A", "rationale": "Leak is real.", "residual": "none"}
+
+
+def arbiter_names(h, run):
+    return [e["note"]["arbiter"] for e in findings_repo.list_events(h.conn, run.id, "R1-F1") if e["actor"] == "arbiter"]
+
+
+def test_arbiters_are_recorded_under_the_agent_names_the_repository_configures(settings, tmp_path):
+    h, run = to_dispute(settings, tmp_path)
+    h.deps.settings = with_review(h.deps.settings, reviewer="agy")
+    h.deps.agents["agy"] = h.reviewer
+    h.reviewer.reply(NOTE)
+    h.author.reply(disagree("R1-F1"))
+    h.reviewer.reply(SPLIT)
+    h.author.reply(SPLIT)
+
+    run = step(h.deps, run)
+
+    assert arbiter_names(h, run) == ["agy", "claude"]
+
+
+def test_one_agent_in_both_roles_arbitrates_twice_under_role_labels(settings, tmp_path):
+    h, run = to_dispute(settings, tmp_path)
+    h.deps.settings = with_review(h.deps.settings, reviewer="claude")
+    for data in (NOTE, disagree("R1-F1"), SPLIT, SPLIT):
+        h.author.reply(data)
+
+    run = step(h.deps, run)
+
+    assert arbiter_names(h, run) == ["claude-reviewer", "claude-author"]
+    arbitrations = [request.output_dir for request in h.author.requests if request.phase == "arbitrate"]
+    assert len(set(arbitrations)) == 2
+
+
+def test_alignment_and_arbitration_leave_effort_to_an_agent_the_repository_leaves_it_to(settings, tmp_path):
+    h, run = to_dispute(settings, tmp_path)
+    h.deps.settings = with_review(h.deps.settings, reviewer="agy", reviewer_effort="")
+    h.deps.agents["agy"] = h.reviewer
+    h.reviewer.reply(NOTE)
+    h.author.reply(disagree("R1-F1"))
+    h.reviewer.reply(SPLIT)
+    h.author.reply(SPLIT)
+
+    step(h.deps, run)
+
+    efforts = {request.phase: request.effort for request in h.reviewer.requests if request.phase in ("align", "arbitrate")}
+    assert efforts == {"align": "", "arbitrate": ""}
+    assert {request.effort for request in h.author.requests if request.phase == "arbitrate"} == {"high"}
 
 
 def test_neither_arbiter_request_carries_the_author_cli_login(settings, tmp_path):

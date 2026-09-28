@@ -33,6 +33,7 @@ class PauseReason(StrEnum):
     SCRIPTS_CHANGED = "scripts_changed"
     WORKSPACE_FOREIGN = "workspace_foreign"
     GITHUB_ERROR = "github_error"
+    READ_ONLY_VIOLATED = "read_only_violated"
     MANUAL = "manual"
 
 
@@ -47,6 +48,15 @@ class Budgets:
     max_review_passes: int
     max_fix_attempts: int
     max_alignment_exchanges: int
+
+
+@dataclass(frozen=True)
+class AgentChoice:
+    """Which CLI a role runs and the model and effort it was given; empty model or effort means the CLI chose."""
+
+    agent: str
+    model: str
+    effort: str
 
 
 @dataclass
@@ -74,6 +84,7 @@ class Run:
     created_at: str = ""
     updated_at: str = ""
     extra: dict[str, str] = field(default_factory=dict)
+    agents: dict[str, AgentChoice] = field(default_factory=dict)
 
     def mode(self) -> str:
         """`inspect` or `publish`, stored at enrolment; without it, a run counts as inspect only while paused for inspection."""
