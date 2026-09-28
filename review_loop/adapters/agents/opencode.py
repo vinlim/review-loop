@@ -2,7 +2,8 @@
 
 opencode has no schema-constrained output, so the schema goes into the prompt and the coordinator validates what
 comes back. Permissions are set on a tool-owned agent through OPENCODE_CONFIG_CONTENT, which outranks a reviewed
-repository's own opencode config."""
+repository's own opencode config key by key. Config is merged, though, so the checkout's plugins, MCP servers and
+formatters still load; the coordinator will not start opencode once a PR or fix changes them (startup_files)."""
 
 from __future__ import annotations
 

@@ -39,7 +39,7 @@ push. To run the same PR for real, `stop` it and `start` again (the worktree is 
 are honoured at the point of each effect.
 
 A run pauses, never guesses, on: a usage limit, expired auth, a remote head that moved, a dirty or
-foreign worktree, a PR or fix that changes a registered script, checks that fail twice or cannot run
+foreign worktree, a PR or fix that changes a registered script or a file the agent CLI runs at startup, checks that fail twice or cannot run
 (a timed-out check counts as unavailable), a commit in the worktree the coordinator did not make, a
 push the remote does not confirm, a GitHub error, an agent that returns nothing usable, or an agent
 that changed the worktree during a read-only phase (`read_only_violated`; the change is left in place
@@ -78,8 +78,12 @@ author = "claude"
 Whatever the agent, every read-only phase ends with a check that HEAD and the working tree did not
 change, and the run pauses with `read_only_violated` if they did. The check sees only the worktree, so
 the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
-them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`;
-`agy` and `opencode` load the ones in your own settings.
+them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
+`agy` and `opencode` load the ones in your own settings, and also run what the checkout declares at
+startup (`.agents/hooks.json`, `.agents/mcp_config.json` and `.agents/plugins/` for `agy`; `opencode.json`
+and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can switch that off, so the
+coordinator refuses to start either agent once the PR or a fix has changed one of those files
+(`scripts_changed`).
 
 The `agy` and `opencode` adapters follow those CLIs' published docs and are covered by offline tests,
 but neither has run against the real CLI yet. Try one PR with `--inspect-only` before letting either

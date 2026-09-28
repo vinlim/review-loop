@@ -1,8 +1,9 @@
 """agy -p (Antigravity CLI) behind the AgentAdapter protocol: schema-shaped output in a JSON envelope.
 
 Headless agy allows file writes inside the workspace whatever the phase, so read-only rests on the coordinator's
-worktree check; `--sandbox` restricts the terminal. It cannot fork a conversation, so it never resumes the
-developer's own."""
+worktree check; `--sandbox` restricts the terminal. Workspace hooks, MCP servers and plugins under .agents/ load
+from the checkout with no flag to stop them; the coordinator will not start agy once a PR or fix changes them
+(startup_files). It cannot fork a conversation, so it never resumes the developer's own."""
 
 from __future__ import annotations
 

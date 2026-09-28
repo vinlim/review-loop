@@ -2,6 +2,8 @@ import dataclasses
 import json
 from pathlib import Path
 
+import pytest
+
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import runs as runs_repo
@@ -248,6 +250,81 @@ def test_a_read_only_phase_that_commits_pauses(settings, tmp_path):
     run = step(h.deps, run)
 
     assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+
+
+def broken_git(path):
+    raise RuntimeError(f"git rev-parse HEAD in {path} failed (exit 128): fatal: not a git repository")
+
+
+def test_a_read_only_phase_that_breaks_the_worktrees_git_metadata_pauses_and_closes_its_attempt(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    h.reviewer.on_run = lambda request: setattr(h.git, "head_sha", broken_git)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.READ_ONLY_VIOLATED
+    status, error = h.conn.execute("select status, error_json from phase_attempts where phase = 'review'").fetchone()
+    assert status == "failed" and "not a git repository" in error
+
+
+@pytest.mark.parametrize("agent, path", [
+    ("opencode", "opencode.json"),
+    ("opencode", ".opencode/plugins/notify.ts"),
+    ("agy", ".agents/hooks.json"),
+    ("agy", ".agents/mcp_config.json"),
+    ("agy", ".agents/plugins/lint/hooks.json"),
+])
+def test_a_pr_that_changes_a_file_the_agent_cli_runs_at_startup_pauses_before_that_agent_starts(settings, tmp_path, agent, path):
+    h = Harness(with_review(settings, reviewer=agent, reviewer_model="", reviewer_effort=""), tmp_path)
+    reviewer = FakeAgent()
+    h.deps.agents[agent] = reviewer
+    h.git.changed = ["app/Models/User.php", path]
+    run = step(h.deps, h.run)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.SCRIPTS_CHANGED
+    assert run.extra["scripts_changed"] == [path] and reviewer.requests == []
+
+
+def test_a_startup_file_changed_in_the_worktree_stops_the_next_run_of_that_agent(settings, tmp_path):
+    h = Harness(with_review(settings, author="opencode", author_model="", author_effort=""), tmp_path)
+    opencode = FakeAgent()
+    h.deps.agents["opencode"] = opencode
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.git.working_changed.append(".opencode/plugins/notify.ts")
+
+    run = step(h.deps, run)
+
+    assert run.pause_reason == PauseReason.SCRIPTS_CHANGED and opencode.requests == []
+
+
+def test_an_agent_switched_in_mid_run_is_checked_for_its_own_startup_files(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.git.changed = [".opencode/plugins/notify.ts"]
+    run = step(h.deps, h.run)
+    opencode = FakeAgent()
+    h.deps.agents["opencode"] = opencode
+    h.deps.settings = with_review(h.deps.settings, reviewer="opencode", reviewer_model="", reviewer_effort="")
+
+    run = step(h.deps, run)
+
+    assert run.pause_reason == PauseReason.SCRIPTS_CHANGED and opencode.requests == []
+
+
+def test_a_startup_file_of_an_agent_the_repository_does_not_use_does_not_pause(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.git.changed = [".opencode/plugins/notify.ts", ".agents/hooks.json"]
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.ASSESSING
 
 
 def test_prepare_looks_for_a_desktop_session_of_the_configured_author_agent(settings, tmp_path):

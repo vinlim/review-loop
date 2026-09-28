@@ -6,8 +6,9 @@ from review_loop.repositories import verification as verification_repo
 from review_loop.services.run_coordinator import run_loop, step
 from review_loop.types.result import Err
 from review_loop.types.run import PauseReason, RunState
+from tests.fakes.agent import FakeAgent
 from tests.fakes.notifier import FakeNotifier
-from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness
+from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness, with_review
 
 LOGGER = "services/notifier/src/logger.ts"
 NUMBERS = "app/Support/JsonNumbers.php"
@@ -67,6 +68,24 @@ def to_publishing(h):
 
 
 # --- fix ------------------------------------------------------------------------------------------
+
+def test_after_a_switch_of_author_agent_the_new_agent_starts_fresh_then_resumes_its_own_session(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    opencode = FakeAgent()
+    h.deps.agents["opencode"] = opencode
+    h.deps.settings = with_review(h.deps.settings, author="opencode", author_model="", author_effort="")
+    opencode.reply(ASSESS_984, session_id="ses-opencode")
+    opencode.reply(FIX)
+
+    step(h.deps, step(h.deps, run))
+
+    assess, fix = opencode.requests
+    assert assess.resume_session_id == "" and "no session memory" in assess.prompt
+    assert fix.resume_session_id == "ses-opencode"
+
 
 def test_the_fix_request_carries_only_accepted_findings_the_contract_and_write_access(settings, tmp_path):
     h = harness(settings, tmp_path)

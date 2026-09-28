@@ -285,3 +285,18 @@ def test_a_repository_that_is_not_a_table_is_rejected(tmp_path):
         load_settings(path)
 
     assert "repositories.other must be a table" in str(raised.value)
+
+
+@pytest.mark.parametrize("line, key, minimum", [
+    ("review = { max_review_passes = 0 }", "review.max_review_passes", 1),
+    ("review = { max_fix_attempts = 0 }", "review.max_fix_attempts", 1),
+    ("review = { max_alignment_exchanges = -1 }", "review.max_alignment_exchanges", 0),
+    ("review = { timeouts_minutes = { fix = 0 } }", "review.timeouts_minutes.fix", 1),
+])
+def test_a_budget_or_timeout_below_its_minimum_is_rejected_naming_the_minimum(tmp_path, line, key, minimum):
+    path = write(tmp_path, with_line("repositories.webapp", line))
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert f"repositories.webapp.{key} must be at least {minimum}" in str(raised.value)
