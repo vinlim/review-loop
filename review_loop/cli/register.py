@@ -77,8 +77,8 @@ def _required_checks(local_path: Path, has_runner: bool) -> list[list[str]]:
 
 
 def _pytest_command(local_path: Path, options: dict) -> list[str]:
-    """`python -m pytest` puts the worktree it runs in ahead of the interpreter's installed copy of the project on
-    sys.path, so a flat layout is tested as checked out; a src layout needs src put there too."""
+    """Runnable by hand from a worktree: `python -m pytest` puts the cwd first on sys.path, and a src layout gets src
+    put there too. In a run the coordinator also leads PYTHONPATH with the worktree, so child processes agree."""
     command = [_python_interpreter(local_path), "-m", "pytest", "-q"]
     configured = _paths(options.get("pythonpath", []))
     if (local_path / "src").is_dir() and "src" not in configured:
@@ -104,7 +104,7 @@ def _pytest_options_in(path: Path) -> dict | None:
         return _toml(path).get("pytest", {})
     if path.name == "pyproject.toml":
         table = _toml(path).get("tool", {}).get("pytest")
-        if not table:
+        if not isinstance(table, dict):
             return None
         return {**{key: value for key, value in table.items() if key != "ini_options"}, **table.get("ini_options", {})}
     return _ini_section(path, "tool:pytest" if path.name == "setup.cfg" else "pytest")

@@ -24,3 +24,4 @@ def sanitize_env(base_env: dict[str, str], patterns: list[str], shims_dir: str) 
         env[f"GIT_CONFIG_KEY_{index}"] = key
         env[f"GIT_CONFIG_VALUE_{index}"] = value
     return env
+

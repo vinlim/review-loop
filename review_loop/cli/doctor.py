@@ -10,6 +10,7 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
+from review_loop.services.workspace import is_pytest_check
 from review_loop.services.state_dir import readable_by_others
 from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import ProcessRunner
@@ -105,7 +106,7 @@ def _verification(process: ProcessRunner, repo) -> Check:
     if not repo.verification.required:
         return Check(name, False, f"no required check; a fix can never be verified. Add `required` under `[repositories.{repo.name}.verification]`")
     for command in repo.verification.required:
-        if command[1:3] == ["-m", "pytest"] and _run(process, [command[0], "-c", "import pytest"]).exit_code != 0:
+        if is_pytest_check(command) and _run(process, [command[0], "-c", "import pytest"]).exit_code != 0:
             return Check(name, False, f"{command[0]} cannot import pytest; install it with `{command[0]} -m pip install pytest`")
     return Check(name, True, "; ".join(" ".join(command) for command in repo.verification.required))
 

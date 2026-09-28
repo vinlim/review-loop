@@ -70,7 +70,8 @@ def test_registration_reads_every_file_pytest_reads_and_only_the_sections_pytest
     assert required(repo, tmp_path) == []
 
     for filename, text in (("tox.ini", "[pytest]\ntestpaths = tests\n"), ("setup.cfg", "[tool:pytest]\ntestpaths = tests\n"),
-                           (".pytest.ini", ""), ("pytest.toml", ""), ("pyproject.toml", '[tool.pytest]\ntestpaths = ["tests"]\n')):
+                           (".pytest.ini", ""), ("pytest.toml", ""), ("pyproject.toml", '[tool.pytest]\ntestpaths = ["tests"]\n'),
+                           ("pyproject.toml", "[tool.pytest]\n")):
         (repo / filename).write_text(text)
         assert required(repo, tmp_path) == [[sys.executable, "-m", "pytest", "-q"]], filename
         (repo / filename).unlink()

@@ -16,7 +16,7 @@ from review_loop.services.phase_support import (
     Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
     project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
-from review_loop.services.workspace import registered_script_files
+from review_loop.services.workspace import pytest_check_env, registered_script_files
 from review_loop.types.result import Err, Ok, Result
 from review_loop.types.run import PauseReason, Run, RunState
 
@@ -152,7 +152,8 @@ def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> tuple
         if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), repo_config, log_parts) != "passed":
             return "failed", "\n".join(log_parts), ""
     tree_before = deps.git.stage_all_and_tree_hash(run.worktree_path)
-    statuses = [_outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), repo_config, log_parts)
+    statuses = [_outcome(deps.process.run(command, cwd=run.worktree_path, env=pytest_check_env(command, run.worktree_path, env),
+                                          timeout_seconds=timeout), repo_config, log_parts)
                 for command in repo_config.verification.required]
     tree_after = deps.git.stage_all_and_tree_hash(run.worktree_path)
     log = "\n".join(log_parts)

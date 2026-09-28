@@ -21,7 +21,9 @@ counts are exact. The same text is saved as `runs/<run-id>/report.md`.
 
 `repo add` writes `~/.review-loop/config.toml`. It registers `.claude/run-tests.sh` as the required
 check when the project has one, or pytest when the project configures it; a registration with no
-required check fails `doctor`, because a fix can never be verified without one. Everything the tool produces lives under
+required check fails `doctor`, because a fix can never be verified without one. A pytest check runs with the
+worktree leading `PYTHONPATH`, so the processes it starts test the worktree too, never an installed copy of the
+project. Everything the tool produces lives under
 `~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, prepare and
 verification logs, `report.md`), `worktrees/`, `logs/`. The directory is created private to your
 account, and `doctor` fails when other accounts can read it.
