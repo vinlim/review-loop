@@ -309,16 +309,14 @@ def check_pull_before_effect(deps: Deps, run: Run) -> Run | None:
     pull = deps.github.fetch_pull(ref(run))
     if pull.state != "open":
         return save(deps, run, RunState.CANCELLED)
-    if head_moved(deps, run, pull):
+    if head_moved(deps, run):
         return pause(deps, run, PauseReason.HEAD_CHANGED, resume_state=run.state)
     return None
 
 
-def head_moved(deps: Deps, run: Run, pull: PullRequest) -> bool:
-    """Whether the PR branch points somewhere other than the last head this run put or found there. GitHub's API can
-    answer from before a push git already confirmed, so a mismatch counts only when git shows it too."""
-    if pull.head_sha == remote_head(run):
-        return False
+def head_moved(deps: Deps, run: Run) -> bool:
+    """Whether the PR branch points somewhere other than the last head this run put or found there. Git is asked, never
+    the API: GitHub can answer from before a push git already confirmed, whether the run's own or someone else's."""
     return deps.git.remote_branch_head(run.worktree_path, repo(deps, run).remote, run.head_ref) != remote_head(run)
 
 

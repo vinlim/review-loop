@@ -122,7 +122,7 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
     run.extra[f"candidate_commit_pass_{run.pass_no}"] = sha
     if pull.head_sha == sha:
         return _record_pushed(deps, run, sha)
-    if head_moved(deps, run, pull):
+    if head_moved(deps, run):
         return pause(deps, run, PauseReason.HEAD_CHANGED, resume_state=RunState.VERIFYING)
     if not repo_config.publication.push_verified_fixes:
         run.extra["unpushed_commits"] = run.extra.get("unpushed_commits", []) + [sha]

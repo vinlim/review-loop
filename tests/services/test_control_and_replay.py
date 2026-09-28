@@ -294,3 +294,27 @@ def test_a_verified_fix_is_pushed_when_the_api_lags_the_runs_previous_push(setti
 
     assert run.state == RunState.PUBLISHING
     assert h.git.pushes[-1][4] == "p" * 40
+
+
+def test_publishing_pauses_when_git_shows_a_move_the_api_has_not_caught_up_with(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    writes = len(h.github.writes)
+    h.git.remote_heads["claude/change"] = "x" * 40  # someone else pushed; the API still answers with the expected head
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.HEAD_CHANGED and len(h.github.writes) == writes
+
+
+def test_a_run_completes_while_the_api_still_shows_the_head_before_its_own_push(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    h.github.move_head(1004, "a" * 40)  # stale for the rest of the run
+    run = step(h.deps, run)
+    assert run.state == RunState.REREVIEWING
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.COMPLETE and run.pause_reason is None
