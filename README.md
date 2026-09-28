@@ -14,6 +14,11 @@ npm i -g @openai/codex            # uses the ChatGPT desktop login at ~/.codex/a
 .venv/bin/review-loop doctor
 ```
 
+At the end of a run the tool posts one report to the PR: an overview, how each finding ended, every
+exception with both positions, the findings closed without a verified fix and why, the run pass by pass, and the
+commits it made with their files. The report is built from the run's records, so its ids, commits and
+counts are exact. The same text is saved as `runs/<run-id>/report.md`.
+
 `repo add` writes `~/.review-loop/config.toml`. Everything the tool produces lives under
 `~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, verification logs,
 `report.md`), `worktrees/`, `logs/`.
@@ -34,7 +39,8 @@ review-loop backup | restore <archive>
 ```
 
 Inspect-only is a property of the run, fixed at `start`: a dry run can never be resumed into a fix or a
-push. To run the same PR for real, `stop` it and `start` again (the worktree is reused). The three
+push. To run the same PR for real, `stop` it and `start` again (the worktree is reused); until then a
+`start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
 are honoured at the point of each effect.
 
@@ -89,20 +95,37 @@ settings and the tool's own `--settings` apply, and `--strict-mcp-config` keeps 
 with `claude` or `claude setup-token`; an `apiKeyHelper` in your settings does not reach these runs.
 The flag also leaves every `CLAUDE.md` and `.claude/rules/` file out of Claude's context, yours
 included. Every packet names the repository's `instruction_files` for the agent to read, so list
-`.claude/CLAUDE.md` there if a repository keeps its instructions in it. `codex` starts with `--ignore-user-config`, which also drops
-your list of trusted projects. The worktree then counts as untrusted, and Codex loads none of its
-`.codex/` config, hooks, rules or MCP servers. Without the flag, a worktree inherits the trust you gave
-its main checkout.
+`.claude/CLAUDE.md` there if a repository keeps its instructions in it. `codex` starts with
+`--ignore-user-config`, which also drops your list of trusted projects. The worktree then counts as
+untrusted, and Codex loads none of its `.codex/` config, hooks, rules or MCP servers. Without the flag,
+a worktree inherits the trust you gave its main checkout.
 
 `agy` and `opencode` load the MCP servers in your own settings, and also run what the checkout declares
-at startup (`.agents/hooks.json`, `.agents/mcp_config.json` and `.agents/plugins/` for `agy`;
-`opencode.json` and `.opencode/` for `opencode`). Neither CLI can switch that off, so the coordinator
-refuses to start either agent once the PR or a fix has changed one of those files (`scripts_changed`).
+at startup (`.agents/hooks.json`, `.agents/mcp_config.json`, `.agents/plugins/` and `.agents/agents/` for
+`agy`; `opencode.json` and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can
+switch that off, so the coordinator refuses to start either agent once the PR or a fix has changed one
+of those files, or anything has left one there untracked (`scripts_changed`). That pins what the CLI
+starts to the base branch, as the registered scripts are pinned; what it starts can still run the PR's
+code, as the project's tests do in verification. The environment above is the boundary for all of it,
+which is why only PRs from `allowed_pr_authors` run.
 
 The `agy` and `opencode` adapters follow those CLIs' published docs and are covered by offline tests,
 but neither has run against the real CLI yet. Try one PR with `--inspect-only` before letting either
 fix code. Adding another CLI means one adapter in `review_loop/adapters/agents/` and an entry in
 `AGENT_PROFILES` and `AGENT_ADAPTERS`.
+
+## Agent skill
+
+`skills/review-loop/SKILL.md` teaches a coding agent (Claude Code, or anything that reads agent
+skills) to operate this tool: start and inspect runs, act on each pause reason, read the report,
+and work the inbox, without doing the review or the fixes itself. Install it for yourself by
+copying or linking the directory into your skills folder:
+
+```bash
+ln -s "$PWD/skills/review-loop" ~/.claude/skills/review-loop
+```
+
+Then ask the agent to run review-loop on a PR URL, check a run, or open the inbox.
 
 ## Verify
 

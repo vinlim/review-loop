@@ -85,3 +85,10 @@ class Run:
     updated_at: str = ""
     extra: dict[str, str] = field(default_factory=dict)
     agents: dict[str, AgentChoice] = field(default_factory=dict)
+
+    def mode(self) -> str:
+        """`inspect` or `publish`, stored at enrolment; without it, a run counts as inspect only while paused for inspection."""
+        stored = self.extra.get("mode")
+        if stored:
+            return stored
+        return "inspect" if self.state == RunState.PAUSED and self.pause_reason == PauseReason.INSPECT_ONLY else "publish"

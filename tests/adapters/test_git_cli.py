@@ -154,3 +154,22 @@ def test_a_guarded_push_refuses_when_the_remote_moved(repo, tmp_path):
     result = git.push_guarded(str(repo), sh(repo, "git", "remote", "get-url", "origin"), mine, "main", expected_remote_sha=base)
 
     assert not result.ok and result.error == "head_changed"
+
+
+def test_paths_differing_from_a_base_include_ignored_files_symlinks_and_names_git_would_quote(repo):
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+    base = sh(repo, "git", "rev-parse", "HEAD")
+    (repo / ".gitignore").write_text(".opencode/cache/\n")
+    (repo / ".opencode" / "plugins").mkdir(parents=True)
+    (repo / ".opencode" / "plugins" / 'my "plugin".ts').write_text("export {}\n")
+    sh(repo, "git", "add", ".gitignore", ".opencode")
+    sh(repo, "git", "commit", "-q", "-m", "plugin")
+    (repo / ".opencode" / "cache").mkdir()
+    (repo / ".opencode" / "cache" / "pwn.ts").write_text("export {}\n")
+    (repo / "tools").mkdir()
+    os.symlink("tools", repo / ".agents")
+    (repo / "a.txt").write_text("changed, outside the pathspecs\n")
+
+    paths = git.paths_differing_from(str(repo), base, [".agents", ".opencode", "opencode.json"])
+
+    assert sorted(paths) == [".agents", ".opencode/cache/pwn.ts", '.opencode/plugins/my "plugin".ts']

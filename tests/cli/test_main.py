@@ -2,6 +2,8 @@ from review_loop.cli.container import Container
 from review_loop.cli.main import main
 from review_loop.repositories import runs as runs_repo
 from review_loop.repositories.db import connect, migrate
+from review_loop.services import run_control
+from review_loop.types.run import PauseReason
 from tests.config.test_settings import MINIMAL, write
 from tests.fakes.clock import FakeClock
 from tests.fakes.git import FakeGit
@@ -70,3 +72,29 @@ def test_a_missing_config_exits_non_zero_advising_to_register_a_repository(tmp_p
 
     assert main(["status"]) == 2
     assert "review-loop repo add <path>" in capsys.readouterr().err
+
+
+def test_a_start_in_the_other_mode_is_refused_and_names_the_run_to_stop(settings, capsys):
+    box = container(settings)
+    assert main(["start", URL, "--no-run", "--inspect-only"], container=box) == 0
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    capsys.readouterr()
+
+    assert main(["start", URL, "--no-run"], container=box) == 2
+
+    err = capsys.readouterr().err
+    assert "mode_conflict" in err and run_id in err and "is inspect" in err and "stop it" in err
+    assert [run.id for run in runs_repo.list_runs(box.conn)] == [run_id]
+
+
+def test_the_start_line_reports_the_resolved_mode_for_a_run_without_a_stored_one(settings, capsys):
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.extra.pop("mode")
+    run_control.pause(box.conn, run, PauseReason.INSPECT_ONLY, box.clock)
+    capsys.readouterr()
+
+    assert main(["start", URL, "--no-run", "--inspect-only"], container=box) == 0
+
+    assert f"run {run.id} (paused, inspect)" in capsys.readouterr().out
