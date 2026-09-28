@@ -69,6 +69,13 @@ class GitCli:
         completed = self.process.run(["git", "rev-parse", f"{sha}:{file}"], cwd=path, env=self.env, timeout_seconds=self.timeout_seconds)
         return completed.stdout.strip() if completed.exit_code == 0 else ""
 
+    def paths_differing_from(self, path: str, base: str, pathspecs: list[str]) -> list[str]:
+        """Tracked paths whose working-tree content differs from base, and every untracked path, ignored ones included,
+        limited to pathspecs. NUL-separated output, so git never quotes a name."""
+        tracked = self._git(path, "diff", "--name-only", "-z", base, "--", *pathspecs)
+        untracked = self._git(path, "ls-files", "--others", "-z", "--", *pathspecs)
+        return [entry for entry in f"{tracked}\0{untracked}".split("\0") if entry]
+
     def working_changed_files(self, path: str) -> list[str]:
         files = []
         for line in self._git(path, "status", "--porcelain", "--untracked-files=all").splitlines():

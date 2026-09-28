@@ -86,10 +86,13 @@ change, and the run pauses with `read_only_violated` if they did. The check sees
 the agents with weaker read-only modes (`agy`, `opencode`) also rely on the environment the tool gives
 them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
 `agy` and `opencode` load the ones in your own settings, and also run what the checkout declares at
-startup (`.agents/hooks.json`, `.agents/mcp_config.json` and `.agents/plugins/` for `agy`; `opencode.json`
-and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can switch that off, so the
-coordinator refuses to start either agent once the PR or a fix has changed one of those files
-(`scripts_changed`).
+startup (`.agents/hooks.json`, `.agents/mcp_config.json`, `.agents/plugins/` and `.agents/agents/` for
+`agy`; `opencode.json` and `.opencode/` for `opencode`) before their permissions apply. Neither CLI can
+switch that off, so the coordinator refuses to start either agent once the PR or a fix has changed one
+of those files, or anything has left one there untracked (`scripts_changed`). That pins what the CLI
+starts to the base branch, as the registered scripts are pinned; what it starts can still run the PR's
+code, as the project's tests do in verification. The environment above is the boundary for all of it,
+which is why only PRs from `allowed_pr_authors` run.
 
 The `agy` and `opencode` adapters follow those CLIs' published docs and are covered by offline tests,
 but neither has run against the real CLI yet. Try one PR with `--inspect-only` before letting either

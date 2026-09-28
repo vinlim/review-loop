@@ -275,6 +275,9 @@ def test_a_read_only_phase_that_breaks_the_worktrees_git_metadata_pauses_and_clo
     ("agy", ".agents/hooks.json"),
     ("agy", ".agents/mcp_config.json"),
     ("agy", ".agents/plugins/lint/hooks.json"),
+    ("agy", ".agents/agents/helper.md"),
+    ("agy", ".agents"),
+    ("opencode", ".opencode"),
 ])
 def test_a_pr_that_changes_a_file_the_agent_cli_runs_at_startup_pauses_before_that_agent_starts(settings, tmp_path, agent, path):
     h = Harness(with_review(settings, reviewer=agent, reviewer_model="", reviewer_effort=""), tmp_path)
@@ -289,14 +292,15 @@ def test_a_pr_that_changes_a_file_the_agent_cli_runs_at_startup_pauses_before_th
     assert run.extra["scripts_changed"] == [path] and reviewer.requests == []
 
 
-def test_a_startup_file_changed_in_the_worktree_stops_the_next_run_of_that_agent(settings, tmp_path):
+@pytest.mark.parametrize("listing", ["working_changed", "ignored"])
+def test_a_startup_file_written_into_the_worktree_ignored_or_not_stops_the_next_run_of_that_agent(settings, tmp_path, listing):
     h = Harness(with_review(settings, author="opencode", author_model="", author_effort=""), tmp_path)
     opencode = FakeAgent()
     h.deps.agents["opencode"] = opencode
     run = step(h.deps, h.run)
     h.reviewer.reply(REVIEW_984)
     run = step(h.deps, run)
-    h.git.working_changed.append(".opencode/plugins/notify.ts")
+    getattr(h.git, listing).append(".opencode/plugins/notify.ts")
 
     run = step(h.deps, run)
 

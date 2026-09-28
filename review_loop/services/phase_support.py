@@ -118,12 +118,12 @@ def read_only_breach(deps: Deps, path: str, before: tuple[str, list[str]]) -> st
 
 
 def startup_changes(deps: Deps, run: Run, agent_name: str, path: str) -> list[str]:
-    """Files the PR or a fix changed that this agent's CLI would load and run at startup."""
+    """Files the PR or a fix changed, or anything wrote untracked, that this agent's CLI would load and run at startup."""
     profile = AGENT_PROFILES[agent_name]
     if not profile.startup_files:
         return []
-    changed = set(deps.git.changed_files(path, run.merge_base_sha, "HEAD")) | set(deps.git.working_changed_files(path))
-    return sorted(changed_path for changed_path in changed if profile.runs_at_startup(changed_path))
+    changed = deps.git.paths_differing_from(path, run.merge_base_sha, profile.startup_roots())
+    return sorted({changed_path for changed_path in changed if profile.runs_at_startup(changed_path)})
 
 
 def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: str, schema: str, output_dir: Path, policy: str,

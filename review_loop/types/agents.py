@@ -30,13 +30,22 @@ class AgentProfile:
     forks_sessions: bool = False
     startup_files: tuple[str, ...] = ()
 
+    def startup_roots(self) -> list[str]:
+        """The top-level names that hold every startup file, as git pathspecs."""
+        return sorted({entry.split("/")[0] for entry in self.startup_files})
+
     def runs_at_startup(self, path: str) -> bool:
-        return any(path == entry or (entry.endswith("/") and path.startswith(entry)) for entry in self.startup_files)
+        """A parent of a startup file counts too: git lists a symlinked `.agents` or `.opencode` as that one name."""
+        for entry in self.startup_files:
+            target = entry.rstrip("/")
+            if path == target or target.startswith(path + "/") or (entry.endswith("/") and path.startswith(entry)):
+                return True
+        return False
 
 
 AGENT_PROFILES = {
     "agy": AgentProfile("agy", "install the Antigravity CLI, then run `agy` once to sign in",
-                        startup_files=(".agents/hooks.json", ".agents/mcp_config.json", ".agents/plugins/")),
+                        startup_files=(".agents/hooks.json", ".agents/mcp_config.json", ".agents/plugins/", ".agents/agents/")),
     "claude": AgentProfile("claude", "install Claude Code, then run `claude` once to log in", "claude-opus-5-5", "xhigh",
                            forks_sessions=True),
     "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-5.6-sol", "xhigh"),
