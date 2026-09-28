@@ -229,3 +229,24 @@ def test_a_detached_coordinator_is_told_its_parent_already_probed(settings):
     main(["start", URL, "--detach"], container=box)
 
     assert box.spawn.calls[0]["argv"][-3:] == ["drive", runs_repo.list_runs(box.conn)[0].id, "--no-preflight"]
+
+
+def test_a_stop_that_lands_during_a_crashing_drive_is_not_undone_by_the_crash_pause(settings, capsys):
+    from review_loop.services import run_control
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+
+    def stop_then_explode(ref):
+        run_control.stop(box.conn, runs_repo.get_run(box.conn, run_id), box.clock)
+        raise RuntimeError("boom")
+
+    box.github.fetch_pull = stop_then_explode
+    capsys.readouterr()
+
+    assert main(["drive", run_id, "--no-preflight"], container=box) == 1
+
+    run = runs_repo.get_run(box.conn, run_id)
+    assert run.state == RunState.CANCELLED and run.pause_reason is None
+    assert f"run {run_id}: cancelled" in capsys.readouterr().out

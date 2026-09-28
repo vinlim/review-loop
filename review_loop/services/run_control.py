@@ -11,24 +11,40 @@ from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
 
 
 def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock) -> Run:
+    """A person's pause always applies. A coordinator's pause never undoes a stop or a manual pause that landed meanwhile:
+    the persisted run comes back instead, so the caller reports the state that stands."""
     if run.state != RunState.PAUSED:
         run.resume_state = run.state
     run.state = RunState.PAUSED
     run.pause_reason = reason
-    return _save(conn, run, clock)
+    run.updated_at = clock.now().isoformat()
+    if reason == PauseReason.MANUAL:
+        runs_repo.save_run(conn, run)
+        return run
+    if runs_repo.save_run_unless_controlled(conn, run):
+        return run
+    return runs_repo.get_run(conn, run.id)
 
 
 def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = False) -> Result[Run, str]:
     """A moved head cannot be resumed where it stopped: the run goes back through preparation to adopt it. A run in a
-    working state that no coordinator drives (`unattended`) continues from that state; every phase can be re-entered."""
+    working state that no coordinator drives (`unattended`) continues from that state; every phase can be re-entered.
+    The write lands only while the run still reads as the caller saw it, so a stop that came between is kept."""
+    seen = (run.state, run.pause_reason, run.updated_at)
     if unattended and run.state in WORKING_STATES:
-        return Ok(_save(conn, run, clock))
-    if run.state != RunState.PAUSED or run.resume_state is None:
+        pass
+    elif run.state != RunState.PAUSED or run.resume_state is None:
         return Err(f"run {run.id} is {run.state.value}, not paused")
-    run.state = RunState.PREPARING if run.pause_reason == PauseReason.HEAD_CHANGED else run.resume_state
-    run.resume_state = None
-    run.pause_reason = None
-    return Ok(_save(conn, run, clock))
+    else:
+        run.state = RunState.PREPARING if run.pause_reason == PauseReason.HEAD_CHANGED else run.resume_state
+        run.resume_state = None
+        run.pause_reason = None
+    run.updated_at = clock.now().isoformat()
+    if runs_repo.save_run_if_unchanged(conn, run, *seen):
+        return Ok(run)
+    current = runs_repo.get_run(conn, run.id)
+    reason = f" ({current.pause_reason.value})" if current.pause_reason else ""
+    return Err(f"run {run.id} changed while resuming: it is now {current.state.value}{reason}")
 
 
 def stop(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:

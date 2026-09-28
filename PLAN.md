@@ -545,7 +545,7 @@ silently alter evidence.
 | required checks fail | preserve evidence; one repair attempt (counted in fix runs, so a verification that ran nothing costs none), then pause; the repair may touch code the PR already had |
 | checks unavailable or nothing selected | report incomplete verification; never a pass; a registered fallback runs when every check passed or selected nothing, and its result stands in their place |
 | an agent cannot serve its configured model | probe each agent before the first phase and on every resume; pause with `agent_unavailable` and the CLI's own error |
-| coordinator crash | pause with `coordinator_failed`, traceback kept; resume retries the phase |
+| coordinator crash | pause with `coordinator_failed`, traceback kept; resume retries the phase; a stop or manual pause that landed meanwhile stands, as after any coordinator pause |
 | coordinator process lost (session closed, shell killed) | the free lock shows the run as `(no coordinator)`; resume continues from that phase |
 | usage limit | pause with `usage_limit`; automatic resumption after the window is an opt-in policy |
 | authentication expired | pause with `auth_required`; renew through the CLI's own flow |

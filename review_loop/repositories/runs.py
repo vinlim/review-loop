@@ -23,9 +23,28 @@ def create_run(conn: sqlite3.Connection, run: Run) -> None:
 
 
 def save_run(conn: sqlite3.Connection, run: Run) -> None:
+    _update(conn, run, "1 = 1", ())
+
+
+def save_run_unless_controlled(conn: sqlite3.Connection, run: Run) -> bool:
+    """Write unless a person cancelled the run or paused it by hand meanwhile: that control wins over the coordinator.
+    One statement, so nothing can land between the check and the write."""
+    return _update(conn, run, "state != ? and not (state = ? and pause_reason = ?)",
+                   (RunState.CANCELLED.value, RunState.PAUSED.value, PauseReason.MANUAL.value))
+
+
+def save_run_if_unchanged(conn: sqlite3.Connection, run: Run, seen_state: RunState, seen_pause_reason: PauseReason | None,
+                          seen_updated_at: str) -> bool:
+    """Write only while the row still reads as it was seen; a write that lost the race leaves the other party's state alone."""
+    return _update(conn, run, "state = ? and coalesce(pause_reason, '') = ? and updated_at = ?",
+                   (seen_state.value, seen_pause_reason.value if seen_pause_reason else "", seen_updated_at))
+
+
+def _update(conn: sqlite3.Connection, run: Run, condition: str, params: tuple) -> bool:
     columns = _COLUMNS.split(", ")
     assignments = ", ".join(f"{column} = ?" for column in columns[1:])
-    conn.execute(f"update runs set {assignments} where id = ?", (*_row_values(run)[1:], run.id))
+    cursor = conn.execute(f"update runs set {assignments} where id = ? and {condition}", (*_row_values(run)[1:], run.id, *params))
+    return cursor.rowcount == 1
 
 
 def get_run(conn: sqlite3.Connection, run_id: str) -> Run | None:

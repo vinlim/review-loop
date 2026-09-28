@@ -240,3 +240,17 @@ def test_a_push_that_succeeded_before_a_crash_is_recognised_on_resume(settings, 
     run = step(h.deps, run)
 
     assert run.state == RunState.PUBLISHING and run.head_sha == pushed and len(h.git.pushes) == 1
+
+
+def test_a_phase_pause_after_an_external_stop_keeps_the_stop(settings, tmp_path):
+    from review_loop.types.agents import AgentError, AgentFailure
+
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+    h.reviewer.fail(AgentError(AgentFailure.TIMEOUT, "slow"))
+    h.reviewer.fail(AgentError(AgentFailure.TIMEOUT, "slow again"))
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED

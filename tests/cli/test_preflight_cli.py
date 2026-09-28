@@ -65,3 +65,21 @@ def test_no_preflight_skips_the_probes(settings, capsys):
     assert main(["start", URL, "--detach", "--no-preflight"], container=box) == 0
 
     assert len(box.spawn.calls) == 1 and all(adapter.requests == [] for adapter in box.agents.values())
+
+
+def test_a_stop_that_lands_during_the_probe_is_not_undone_by_the_failed_probe(settings, capsys):
+    from review_loop.services import run_control
+
+    box = container(settings)
+    ready(box, author_ok=False)
+
+    def stop_from_another_terminal(request):
+        run_control.stop(box.conn, runs_repo.list_runs(box.conn)[0], box.clock)
+
+    box.agents["claude"].on_run = stop_from_another_terminal
+
+    assert main(["start", URL], container=box) == 1
+
+    run = runs_repo.list_runs(box.conn)[0]
+    assert run.state == RunState.CANCELLED and run.pause_reason is None
+    assert f"run {run.id}: cancelled" in capsys.readouterr().out

@@ -87,3 +87,58 @@ def test_a_finished_run_is_never_resumed_even_when_nothing_holds_its_lock():
     conn, run = make(RunState.COMPLETE)
 
     assert not resume(conn, run, FakeClock(), unattended=True).ok
+
+
+# --- an external stop or manual pause wins over any pause the coordinator records afterwards -------------------
+
+def test_a_coordinator_pause_never_overwrites_a_stop_that_landed_meanwhile():
+    conn, run = make()
+    stale = runs_repo.get_run(conn, run.id)
+    stop(conn, run, FakeClock())
+
+    returned = pause(conn, stale, PauseReason.AGENT_UNAVAILABLE, FakeClock())
+
+    assert returned.state == RunState.CANCELLED
+    assert runs_repo.get_run(conn, run.id).state == RunState.CANCELLED
+
+
+def test_a_coordinator_pause_never_overwrites_a_manual_pause_that_landed_meanwhile():
+    conn, run = make()
+    stale = runs_repo.get_run(conn, run.id)
+    pause(conn, run, PauseReason.MANUAL, FakeClock())
+
+    returned = pause(conn, stale, PauseReason.CHECKS_FAILED, FakeClock())
+
+    assert (returned.state, returned.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert runs_repo.get_run(conn, run.id).pause_reason == PauseReason.MANUAL
+
+
+def test_a_manual_pause_still_applies_to_a_run_the_coordinator_paused():
+    conn, run = make()
+    pause(conn, run, PauseReason.AGENT_FAILED, FakeClock())
+
+    pause(conn, runs_repo.get_run(conn, run.id), PauseReason.MANUAL, FakeClock())
+
+    assert runs_repo.get_run(conn, run.id).pause_reason == PauseReason.MANUAL
+
+
+def test_resume_is_refused_when_the_run_changed_between_the_read_and_the_write():
+    conn, run = make()
+    pause(conn, run, PauseReason.USAGE_LIMIT, FakeClock())
+    stale = runs_repo.get_run(conn, run.id)
+    stop(conn, runs_repo.get_run(conn, run.id), FakeClock())
+
+    result = resume(conn, stale, FakeClock())
+
+    assert not result.ok and "cancelled" in result.error
+    assert runs_repo.get_run(conn, run.id).state == RunState.CANCELLED
+
+
+def test_resume_of_an_unattended_run_is_refused_when_a_stop_landed_after_the_read():
+    conn, run = make(RunState.VERIFYING)
+    stale = runs_repo.get_run(conn, run.id)
+    stop(conn, runs_repo.get_run(conn, run.id), FakeClock())
+
+    result = resume(conn, stale, FakeClock(), unattended=True)
+
+    assert not result.ok and runs_repo.get_run(conn, run.id).state == RunState.CANCELLED
