@@ -148,7 +148,7 @@ def command_start(args, box: Container) -> int:
             print(_refusal_line(box, repo.name, pull_ref.number, result.error, args.inspect_only), file=sys.stderr)
             return 2
         run = result.value
-        print(f"run {run.id} ({run.state.value}, {run.extra.get('mode', 'publish')}) for {run.pr_url}")
+        print(f"run {run.id} ({run.state.value}, {run.mode()}) for {run.pr_url}")
         if args.no_run:
             return 0
         return _drive(box, run, lock=lock)
