@@ -2,6 +2,7 @@ from review_loop.cli.container import Container
 from review_loop.cli.main import main
 from review_loop.repositories import runs as runs_repo
 from review_loop.repositories.db import connect, migrate
+from tests.config.test_settings import MINIMAL, write
 from tests.fakes.clock import FakeClock
 from tests.fakes.git import FakeGit
 from tests.fakes.github import FakeGitHub
@@ -52,3 +53,11 @@ def test_a_refused_start_explains_why_and_exits_non_zero(settings, capsys):
 
     assert main(["start", URL, "--no-run"], container=box) == 2
     assert "author_not_allowed" in capsys.readouterr().err
+
+
+def test_a_config_mistake_exits_non_zero_naming_the_key_instead_of_raising(tmp_path, monkeypatch, capsys):
+    write(tmp_path, MINIMAL + '\n[repositories.webapp.review]\nreviwer = "agy"\n')
+    monkeypatch.setenv("REVIEW_LOOP_HOME", str(tmp_path))
+
+    assert main(["status"]) == 2
+    assert "repositories.webapp.review.reviwer" in capsys.readouterr().err

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -109,8 +111,6 @@ def _repository(reader: _Reader, name: str, table: dict[str, Any]) -> Repository
     prefix = f"repositories.{name}"
     workspace = reader.table(table, "workspace", prefix)
     verification = reader.table(table, "verification", prefix)
-    review = table.get("review", {})
-    publication = table.get("publication", {})
     return RepositoryConfig(
         name=name,
         remote=reader.string(table, "remote", prefix),
@@ -132,25 +132,49 @@ def _repository(reader: _Reader, name: str, table: dict[str, Any]) -> Repository
             unavailable_exit_codes=list(verification.get("unavailable_exit_codes", [])),
             format=reader.commands(verification, "format", f"{prefix}.verification", default=[]),
         ),
-        review=ReviewConfig(
-            **{**_agent_defaults(reader, review, f"{prefix}.review"),
-               **{key: value for key, value in review.items() if key != "timeouts_minutes"}},
-            timeouts_minutes={**DEFAULT_TIMEOUTS_MINUTES, **review.get("timeouts_minutes", {})},
-        ),
-        publication=PublicationConfig(**publication),
+        review=_review(reader, reader.table(table, "review", prefix, default={}), f"{prefix}.review"),
+        publication=_publication(reader, reader.table(table, "publication", prefix, default={}), f"{prefix}.publication"),
     )
 
 
-def _agent_defaults(reader: _Reader, review: dict[str, Any], prefix: str) -> dict[str, str]:
+def _review(reader: _Reader, review: dict[str, Any], prefix: str) -> ReviewConfig:
+    timeouts = reader.table(review, "timeouts_minutes", prefix, default={})
+    timeouts_prefix = f"{prefix}.timeouts_minutes"
+    minutes = {phase: reader.integer(timeouts, phase, timeouts_prefix, default=default)
+               for phase, default in DEFAULT_TIMEOUTS_MINUTES.items()}
+    reader.reject_unknown(timeouts, minutes, timeouts_prefix)
+    values = {
+        **_agents(reader, review, prefix),
+        **{key: reader.integer(review, key, prefix, default=getattr(ReviewConfig, key))
+           for key in ("max_review_passes", "max_fix_attempts", "max_alignment_exchanges")},
+        "timeouts_minutes": minutes,
+    }
+    reader.reject_unknown(review, values, prefix)
+    return ReviewConfig(**values)
+
+
+def _agents(reader: _Reader, review: dict[str, Any], prefix: str) -> dict[str, str]:
     """Model and effort default to the chosen agent's own, so switching agents never inherits another CLI's model."""
-    defaults = {}
+    values = {}
     for role in ("reviewer", "author"):
         name = reader.string(review, role, prefix, default=getattr(ReviewConfig, role))
         if name not in AGENT_PROFILES:
             raise reader._fail(role, prefix, f"must be one of {', '.join(sorted(AGENT_PROFILES))}")
         profile = AGENT_PROFILES[name]
-        defaults.update({role: name, f"{role}_model": profile.default_model, f"{role}_effort": profile.default_effort})
-    return defaults
+        values.update({role: name,
+                       f"{role}_model": reader.string(review, f"{role}_model", prefix, default=profile.default_model),
+                       f"{role}_effort": reader.string(review, f"{role}_effort", prefix, default=profile.default_effort)})
+    return values
+
+
+def _publication(reader: _Reader, publication: dict[str, Any], prefix: str) -> PublicationConfig:
+    values = {
+        **{key: reader.boolean(publication, key, prefix, default=getattr(PublicationConfig, key))
+           for key in ("post_reviews", "post_author_responses", "push_verified_fixes", "mirror_inbox_in_pr_comment")},
+        "forbid_commit_trailers": reader.string_list(publication, "forbid_commit_trailers", prefix, default=DEFAULT_FORBIDDEN_TRAILERS),
+    }
+    reader.reject_unknown(publication, values, prefix)
+    return PublicationConfig(**values)
 
 
 class _Reader:
@@ -171,13 +195,39 @@ class _Reader:
             raise self._fail(key, prefix, "must be a string")
         return value
 
-    def table(self, table: dict[str, Any], key: str, prefix: str = "") -> dict[str, Any]:
-        value = table.get(key)
+    def integer(self, table: dict[str, Any], key: str, prefix: str, default: int | None = None) -> int:
+        value = table.get(key, default)
+        if value is None:
+            raise self._fail(key, prefix, "is required")
+        # bool subclasses int, so `true` would otherwise pass as 1.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise self._fail(key, prefix, "must be an integer")
+        return value
+
+    def boolean(self, table: dict[str, Any], key: str, prefix: str, default: bool | None = None) -> bool:
+        value = table.get(key, default)
+        if value is None:
+            raise self._fail(key, prefix, "is required")
+        if not isinstance(value, bool):
+            raise self._fail(key, prefix, "must be true or false")
+        return value
+
+    def table(self, table: dict[str, Any], key: str, prefix: str = "", default: dict[str, Any] | None = None) -> dict[str, Any]:
+        value = table.get(key, default)
         if value is None:
             raise self._fail(key, prefix, "is required")
         if not isinstance(value, dict):
             raise self._fail(key, prefix, "must be a table")
         return value
+
+    def reject_unknown(self, table: dict[str, Any], known: Iterable[str], prefix: str) -> None:
+        """A key nothing reads is almost always a typo, and ignoring it would silently keep the default."""
+        known = sorted(known)
+        for key in table:
+            if key not in known:
+                close = difflib.get_close_matches(key, known, n=1)
+                hint = f"did you mean {close[0]}?" if close else f"known keys: {', '.join(known)}"
+                raise self._fail(key, prefix, f"is not a known key ({hint})")
 
     def string_list(self, table: dict[str, Any], key: str, prefix: str, default: list[str] | None = None) -> list[str]:
         value = table.get(key, default)
