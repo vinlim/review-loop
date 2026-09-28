@@ -55,9 +55,18 @@ def test_a_refused_start_explains_why_and_exits_non_zero(settings, capsys):
     assert "author_not_allowed" in capsys.readouterr().err
 
 
-def test_a_config_mistake_exits_non_zero_naming_the_key_instead_of_raising(tmp_path, monkeypatch, capsys):
+def test_a_config_mistake_exits_non_zero_naming_the_key_without_advice_to_register(tmp_path, monkeypatch, capsys):
     write(tmp_path, MINIMAL + '\n[repositories.webapp.review]\nreviwer = "agy"\n')
     monkeypatch.setenv("REVIEW_LOOP_HOME", str(tmp_path))
 
     assert main(["status"]) == 2
-    assert "repositories.webapp.review.reviwer" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "repositories.webapp.review.reviwer" in err
+    assert "repo add" not in err
+
+
+def test_a_missing_config_exits_non_zero_advising_to_register_a_repository(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("REVIEW_LOOP_HOME", str(tmp_path))
+
+    assert main(["status"]) == 2
+    assert "review-loop repo add <path>" in capsys.readouterr().err

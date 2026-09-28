@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None, container: Container | None = None) -> i
     try:
         box = container or build_container()
     except ConfigError as error:
-        print(f"config error: {error}\nRegister a repository first: review-loop repo add <path>", file=sys.stderr)
+        print(f"config error: {error}", file=sys.stderr)
         return 2
     return args.handler(args, box)
 

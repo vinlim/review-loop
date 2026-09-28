@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from review_loop.config.settings import (
@@ -5,7 +7,10 @@ from review_loop.config.settings import (
     DEFAULT_TIMEOUTS_MINUTES,
     ConfigError,
     PublicationConfig,
+    RepositoryConfig,
     ReviewConfig,
+    VerificationConfig,
+    WorkspaceConfig,
     load_settings,
 )
 
@@ -35,8 +40,8 @@ def write(tmp_path, text):
     return path
 
 
-def with_repository_line(line):
-    return MINIMAL.replace('trusted_logins = ["vinlim"]\n', f'trusted_logins = ["vinlim"]\n{line}\n')
+def with_line(table, line):
+    return MINIMAL.replace(f"[{table}]\n", f"[{table}]\n{line}\n")
 
 
 def test_valid_toml_loads_into_typed_settings_with_defaults_filled_in(tmp_path):
@@ -188,10 +193,95 @@ def test_an_unknown_timeout_phase_is_rejected_naming_the_phase_it_resembles(tmp_
     ("publication = { forbid_commit_trailers = \"Co-Authored-By\" }", "publication.forbid_commit_trailers", "must be an array of strings"),
 ])
 def test_a_review_or_publication_value_of_the_wrong_type_is_rejected_naming_the_key_and_the_file(tmp_path, line, key, problem):
-    path = write(tmp_path, with_repository_line(line))
+    path = write(tmp_path, with_line("repositories.webapp", line))
 
     with pytest.raises(ConfigError) as raised:
         load_settings(path)
 
     assert f"repositories.webapp.{key} {problem}" in str(raised.value)
     assert str(path) in str(raised.value)
+
+
+def test_every_repository_workspace_and_verification_key_reaches_the_settings(tmp_path):
+    text = '''
+state_dir = "{state_dir}"
+
+[repositories.webapp]
+remote = "https://github.com/acme/webapp.git"
+local_path = "/home/dev/webapp"
+worktree_root = "/home/dev/worktrees"
+instruction_files = ["AGENTS.md"]
+allowed_pr_authors = ["vinlim", "octocat"]
+trusted_logins = ["octocat"]
+
+[repositories.webapp.workspace]
+prepare = [["composer", "install"]]
+sanitize_env = ["DB_*"]
+
+[repositories.webapp.workspace.prepare_when_paths_match]
+"^resources/" = [["npm", "ci"], ["npm", "run", "build"]]
+
+[repositories.webapp.verification]
+required = [["php", "artisan", "test"]]
+unavailable_exit_codes = [3, 4]
+format = [["vendor/bin/pint", "--dirty"]]
+'''
+
+    repo = load_settings(write(tmp_path, text)).repositories["webapp"]
+
+    assert repo == RepositoryConfig(
+        name="webapp", remote="https://github.com/acme/webapp.git", local_path=Path("/home/dev/webapp"),
+        worktree_root=Path("/home/dev/worktrees"), instruction_files=["AGENTS.md"], allowed_pr_authors=["vinlim", "octocat"],
+        trusted_logins=["octocat"],
+        workspace=WorkspaceConfig(prepare=[["composer", "install"]], sanitize_env=["DB_*"],
+                                  prepare_when_paths_match={"^resources/": [["npm", "ci"], ["npm", "run", "build"]]}),
+        verification=VerificationConfig(required=[["php", "artisan", "test"]], unavailable_exit_codes=[3, 4],
+                                        format=[["vendor/bin/pint", "--dirty"]]),
+        review=ReviewConfig(), publication=PublicationConfig())
+
+
+@pytest.mark.parametrize("text, message", [
+    (with_line("repositories.webapp", 'instruction_file = ["AGENTS.md"]'),
+     "repositories.webapp.instruction_file is not a known key (did you mean instruction_files?)"),
+    (with_line("repositories.webapp.workspace", 'sanitise_env = ["DB_*"]'),
+     "repositories.webapp.workspace.sanitise_env is not a known key (did you mean sanitize_env?)"),
+    (with_line("repositories.webapp.verification", 'formatter = [["vendor/bin/pint"]]'),
+     "repositories.webapp.verification.formatter is not a known key (did you mean format?)"),
+    ('default_reviewer = "agy"\n' + MINIMAL, "default_reviewer is not a known key (known keys: repositories, state_dir)"),
+], ids=["repository", "workspace", "verification", "top level"])
+def test_an_unknown_key_at_the_top_level_or_in_a_repository_workspace_or_verification_table_is_rejected(tmp_path, text, message):
+    path = write(tmp_path, text)
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert message in str(raised.value)
+    assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize("codes", ["3", '["3"]', "[true]"])
+def test_unavailable_exit_codes_other_than_an_array_of_integers_are_rejected(tmp_path, codes):
+    path = write(tmp_path, MINIMAL.replace("unavailable_exit_codes = [3]", f"unavailable_exit_codes = {codes}"))
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert "repositories.webapp.verification.unavailable_exit_codes must be an array of integers" in str(raised.value)
+
+
+def test_prepare_when_paths_match_given_as_an_array_is_rejected_as_not_a_table(tmp_path):
+    path = write(tmp_path, with_line("repositories.webapp.workspace", 'prepare_when_paths_match = ["^resources/"]'))
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert "repositories.webapp.workspace.prepare_when_paths_match must be a table" in str(raised.value)
+
+
+def test_a_repository_that_is_not_a_table_is_rejected(tmp_path):
+    path = write(tmp_path, MINIMAL + '\n[repositories]\nother = "https://github.com/acme/other.git"\n')
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert "repositories.other must be a table" in str(raised.value)

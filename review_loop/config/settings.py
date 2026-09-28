@@ -93,15 +93,14 @@ def load_settings(path: Path) -> Settings:
     try:
         raw = tomllib.loads(path.read_text())
     except FileNotFoundError:
-        raise ConfigError(f"config file not found: {path}") from None
+        raise ConfigError(f"config file not found: {path}; register a repository with `review-loop repo add <path>`") from None
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"{path}: not valid TOML: {error}") from None
     reader = _Reader(path)
     state_dir = Path(reader.string(raw, "state_dir"))
-    repositories = {
-        name: _repository(reader, name, table)
-        for name, table in reader.table(raw, "repositories").items()
-    }
+    tables = reader.table(raw, "repositories")
+    repositories = {name: _repository(reader, name, reader.table(tables, name, "repositories")) for name in tables}
+    reader.reject_unknown(raw, ("state_dir", "repositories"))
     if not repositories:
         raise ConfigError(f"{path}: no [repositories.<name>] table; register one with `review-loop repo add`")
     return Settings(state_dir=state_dir, repositories=repositories, source=path)
@@ -109,32 +108,42 @@ def load_settings(path: Path) -> Settings:
 
 def _repository(reader: _Reader, name: str, table: dict[str, Any]) -> RepositoryConfig:
     prefix = f"repositories.{name}"
-    workspace = reader.table(table, "workspace", prefix)
-    verification = reader.table(table, "verification", prefix)
-    return RepositoryConfig(
-        name=name,
-        remote=reader.string(table, "remote", prefix),
-        local_path=Path(reader.string(table, "local_path", prefix)),
-        worktree_root=Path(reader.string(table, "worktree_root", prefix)),
-        instruction_files=reader.string_list(table, "instruction_files", prefix, default=[]),
-        allowed_pr_authors=reader.string_list(table, "allowed_pr_authors", prefix, default=[]),
-        trusted_logins=reader.string_list(table, "trusted_logins", prefix, default=[]),
-        workspace=WorkspaceConfig(
-            prepare=reader.commands(workspace, "prepare", f"{prefix}.workspace"),
-            prepare_when_paths_match={
-                pattern: reader.commands(workspace["prepare_when_paths_match"], pattern, f"{prefix}.workspace.prepare_when_paths_match")
-                for pattern in workspace.get("prepare_when_paths_match", {})
-            },
-            sanitize_env=reader.string_list(workspace, "sanitize_env", f"{prefix}.workspace", default=[]),
-        ),
-        verification=VerificationConfig(
-            required=reader.commands(verification, "required", f"{prefix}.verification"),
-            unavailable_exit_codes=list(verification.get("unavailable_exit_codes", [])),
-            format=reader.commands(verification, "format", f"{prefix}.verification", default=[]),
-        ),
-        review=_review(reader, reader.table(table, "review", prefix, default={}), f"{prefix}.review"),
-        publication=_publication(reader, reader.table(table, "publication", prefix, default={}), f"{prefix}.publication"),
-    )
+    values = {
+        "remote": reader.string(table, "remote", prefix),
+        "local_path": Path(reader.string(table, "local_path", prefix)),
+        "worktree_root": Path(reader.string(table, "worktree_root", prefix)),
+        "instruction_files": reader.string_list(table, "instruction_files", prefix, default=[]),
+        "allowed_pr_authors": reader.string_list(table, "allowed_pr_authors", prefix, default=[]),
+        "trusted_logins": reader.string_list(table, "trusted_logins", prefix, default=[]),
+        "workspace": _workspace(reader, reader.table(table, "workspace", prefix), f"{prefix}.workspace"),
+        "verification": _verification(reader, reader.table(table, "verification", prefix), f"{prefix}.verification"),
+        "review": _review(reader, reader.table(table, "review", prefix, default={}), f"{prefix}.review"),
+        "publication": _publication(reader, reader.table(table, "publication", prefix, default={}), f"{prefix}.publication"),
+    }
+    reader.reject_unknown(table, values, prefix)
+    return RepositoryConfig(name=name, **values)
+
+
+def _workspace(reader: _Reader, workspace: dict[str, Any], prefix: str) -> WorkspaceConfig:
+    by_path = reader.table(workspace, "prepare_when_paths_match", prefix, default={})
+    values = {
+        "prepare": reader.commands(workspace, "prepare", prefix),
+        "prepare_when_paths_match": {pattern: reader.commands(by_path, pattern, f"{prefix}.prepare_when_paths_match")
+                                     for pattern in by_path},
+        "sanitize_env": reader.string_list(workspace, "sanitize_env", prefix, default=[]),
+    }
+    reader.reject_unknown(workspace, values, prefix)
+    return WorkspaceConfig(**values)
+
+
+def _verification(reader: _Reader, verification: dict[str, Any], prefix: str) -> VerificationConfig:
+    values = {
+        "required": reader.commands(verification, "required", prefix),
+        "unavailable_exit_codes": reader.integer_list(verification, "unavailable_exit_codes", prefix, default=[]),
+        "format": reader.commands(verification, "format", prefix, default=[]),
+    }
+    reader.reject_unknown(verification, values, prefix)
+    return VerificationConfig(**values)
 
 
 def _review(reader: _Reader, review: dict[str, Any], prefix: str) -> ReviewConfig:
@@ -199,8 +208,7 @@ class _Reader:
         value = table.get(key, default)
         if value is None:
             raise self._fail(key, prefix, "is required")
-        # bool subclasses int, so `true` would otherwise pass as 1.
-        if isinstance(value, bool) or not isinstance(value, int):
+        if not _is_integer(value):
             raise self._fail(key, prefix, "must be an integer")
         return value
 
@@ -220,7 +228,7 @@ class _Reader:
             raise self._fail(key, prefix, "must be a table")
         return value
 
-    def reject_unknown(self, table: dict[str, Any], known: Iterable[str], prefix: str) -> None:
+    def reject_unknown(self, table: dict[str, Any], known: Iterable[str], prefix: str = "") -> None:
         """A key nothing reads is almost always a typo, and ignoring it would silently keep the default."""
         known = sorted(known)
         for key in table:
@@ -237,6 +245,14 @@ class _Reader:
             raise self._fail(key, prefix, "must be an array of strings")
         return list(value)
 
+    def integer_list(self, table: dict[str, Any], key: str, prefix: str, default: list[int] | None = None) -> list[int]:
+        value = table.get(key, default)
+        if value is None:
+            raise self._fail(key, prefix, "is required")
+        if not isinstance(value, list) or not all(_is_integer(item) for item in value):
+            raise self._fail(key, prefix, "must be an array of integers")
+        return list(value)
+
     def commands(self, table: dict[str, Any], key: str, prefix: str, default: list[list[str]] | None = None) -> list[list[str]]:
         value = table.get(key, default)
         if value is None:
@@ -248,3 +264,8 @@ class _Reader:
 
 def _is_argv(command: Any) -> bool:
     return isinstance(command, list) and len(command) > 0 and all(isinstance(argument, str) for argument in command)
+
+
+def _is_integer(value: Any) -> bool:
+    # bool subclasses int, so `true` would otherwise pass as 1.
+    return isinstance(value, int) and not isinstance(value, bool)
