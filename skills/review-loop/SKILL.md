@@ -98,10 +98,13 @@ review-loop start https://github.com/<owner>/<repo>/pull/<n> --no-run --inspect-
 ```
 
 The one output line reads `run <id> (<state>, publish|inspect) for <url>`. With no active run it
-names the run just enrolled, in the requested mode. If the printed mode matches the request,
-drive it: the same command without `--no-run`. If it differs, an earlier run in the other mode
-exists and would be reused as is; report its id, do not drive it, and let the user `stop` it
-before repeating the probe.
+names the run just enrolled, as `preparing`, in the requested mode. Read both fields:
+
+- Mode differs from the request: an earlier run in the other mode exists and would be reused as
+  is. Report its id, do not drive it, and let the user `stop` it before repeating the probe.
+- Mode matches and the state is `paused`: `start` would exit at once without doing anything, since
+  the loop treats a paused run as stopped. Go to Paused runs and use `resume`.
+- Mode matches and the state is anything else: drive it, the same command without `--no-run`.
 
 `start` streams one line per phase transition and runs for tens of minutes to hours: phase
 timeouts are 40 minutes for review and 60 for a fix or a verification, and a run allows up to
