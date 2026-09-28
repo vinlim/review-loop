@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from review_loop.config.settings import DEFAULT_FORBIDDEN_TRAILERS
+from review_loop.services.state_dir import ensure_private_dir
 
 LARAVEL_SANITIZED_ENV = ["DB_*", "DB_URL", "CACHE_STORE", "SESSION_DRIVER", "QUEUE_CONNECTION", "BROADCAST_CONNECTION", "MAIL_MAILER"]
 
@@ -58,7 +59,7 @@ def registration_toml(name: str, local_path: Path, remote: str, worktree_root: P
 
 
 def append_registration(config_path: Path, registration: str, state_dir: Path) -> None:
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(config_path.parent)
     if not config_path.exists():
         config_path.write_text(f"state_dir = {_v(str(state_dir))}\n\n{registration}")
         return

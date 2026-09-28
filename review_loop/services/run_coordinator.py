@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from review_loop.engine.assessment import validate_dispositions, validate_review_coverage
 from review_loop.engine.completion import decide_after_review
 from review_loop.engine.discussion import Role, digest, make_marker, render_discussion
@@ -78,16 +80,28 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     if set(changed) & registered_script_files(repo_config):
         run.extra["scripts_changed"] = sorted(set(changed) & registered_script_files(repo_config))
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED)
+    log_path = _prepare_log_path(deps, run)
     ready = prepare_workspace(run, repo_config, git=deps.git, process=deps.process, state_dir=deps.settings.state_dir,
-                              base_env=deps.base_env, changed_paths=changed)
+                              base_env=deps.base_env, changed_paths=changed, log_path=log_path)
     if not ready.ok:
+        if ready.error == WorkspaceProblem.PREPARE_FAILED:
+            run.extra["prepare_log"], run.extra["prepare_failure"] = str(log_path), log_path.read_text()[-4000:]
         reason = {WorkspaceProblem.DIRTY: PauseReason.WORKSPACE_DIRTY, WorkspaceProblem.FOREIGN: PauseReason.WORKSPACE_FOREIGN}.get(
             ready.error, PauseReason.PREPARE_FAILED)
         return pause(deps, run, reason)
+    run.extra["prepare_log"] = str(log_path)
+    run.extra.pop("prepare_failure", None)
     run.worktree_path, run.local_branch = ready.value.path, ready.value.local_branch
     if run.author_session in ("", "auto"):
         run.author_session = deps.find_author_session(run.head_ref, str(repo_config.local_path))
     return save(deps, run, RunState.REVIEWING)
+
+
+def _prepare_log_path(deps: Deps, run: Run) -> Path:
+    """Preparation belongs to no pass and a resume can repeat it, so its logs are numbered at run level."""
+    directory = deps.runs_dir / run.id
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"prepare-{len(list(directory.glob('prepare-*.log'))) + 1}.log"
 
 
 # --- phase B and F: review and rereview ------------------------------------------------------------

@@ -20,15 +20,19 @@ NO_MCP = '{"mcpServers":{}}'
 
 
 class ClaudeAdapter:
-    def __init__(self, process: ProcessRunner):
+    """The login travels with this adapter, so no other agent's process and no project command ever holds it."""
+
+    def __init__(self, process: ProcessRunner, oauth_token: str = ""):
         self.process = process
+        self.oauth_token = oauth_token
 
     def run(self, request: PhaseRequest) -> Result[PhaseOutput, AgentError]:
         output_dir = Path(request.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         result_path = output_dir / "result.json"
         argv = self.argv(request)
-        completed = self.process.run(argv, cwd=request.cwd, env=request.env, timeout_seconds=request.timeout_seconds, stdin=request.prompt)
+        env = {**request.env, "CLAUDE_CODE_OAUTH_TOKEN": self.oauth_token} if self.oauth_token else request.env
+        completed = self.process.run(argv, cwd=request.cwd, env=env, timeout_seconds=request.timeout_seconds, stdin=request.prompt)
         result_path.write_text(completed.stdout)
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:

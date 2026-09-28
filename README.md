@@ -14,9 +14,15 @@ npm i -g @openai/codex            # uses the ChatGPT desktop login at ~/.codex/a
 .venv/bin/review-loop doctor
 ```
 
+At the end of a run the tool posts one report to the PR: an overview, how each finding ended, every
+exception with both positions, the findings closed without a verified fix and why, the run pass by pass, and the
+commits it made with their files. The report is built from the run's records, so its ids, commits and
+counts are exact. The same text is saved as `runs/<run-id>/report.md`.
+
 `repo add` writes `~/.review-loop/config.toml`. Everything the tool produces lives under
-`~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, verification logs,
-`report.md`), `worktrees/`, `logs/`.
+`~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, prepare and
+verification logs, `report.md`), `worktrees/`, `logs/`. The directory is created private to your
+account, and `doctor` fails when other accounts can read it.
 
 A registered repository needs per-worktree config, because each tool worktree keeps its push lock in
 its own config file, out of the shared `.git/config` every checkout reads. Turn it on once with
@@ -34,7 +40,8 @@ review-loop backup | restore <archive>
 ```
 
 Inspect-only is a property of the run, fixed at `start`: a dry run can never be resumed into a fix or a
-push. To run the same PR for real, `stop` it and `start` again (the worktree is reused). The three
+push. To run the same PR for real, `stop` it and `start` again (the worktree is reused); until then a
+`start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
 are honoured at the point of each effect.
 
@@ -50,6 +57,19 @@ Agents run with no tokens, no credential helpers (`GIT_CONFIG_GLOBAL` empty, `GI
 The developer's own git configuration is never touched. Everything posted to GitHub and every
 commit message passes through the attribution filter; the author's desktop session is forked, never
 appended to.
+
+## Agent skill
+
+`skills/review-loop/SKILL.md` teaches a coding agent (Claude Code, or anything that reads agent
+skills) to operate this tool: start and inspect runs, act on each pause reason, read the report,
+and work the inbox, without doing the review or the fixes itself. Install it for yourself by
+copying or linking the directory into your skills folder:
+
+```bash
+ln -s "$PWD/skills/review-loop" ~/.claude/skills/review-loop
+```
+
+Then ask the agent to run review-loop on a PR URL, check a run, or open the inbox.
 
 ## Verify
 

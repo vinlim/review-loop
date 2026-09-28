@@ -179,12 +179,9 @@ def externally_controlled(persisted: Run) -> bool:
 
 def inspect_only(deps: Deps, run: Run) -> bool:
     """Inspect mode belongs to the run: set at enrolment, never changed by a later invocation."""
-    mode = run.extra.get("mode")
-    if mode is None:
-        paused_for_inspection = run.state == RunState.PAUSED and run.pause_reason == PauseReason.INSPECT_ONLY
-        mode = "inspect" if (deps.inspect_only or paused_for_inspection) else "publish"
-        run.extra["mode"] = mode
-    return mode == "inspect"
+    if not run.extra.get("mode"):
+        run.extra["mode"] = "inspect" if deps.inspect_only else run.mode()
+    return run.extra["mode"] == "inspect"
 
 
 def remote_head(run: Run) -> str:
@@ -245,7 +242,7 @@ def apply_events(deps: Deps, run: Run, finding: Finding, events: tuple[str, ...]
     return False
 
 
-def agent_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
+def project_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
     return sanitize_env(deps.base_env, repo_config.workspace.sanitize_env, str(ensure_shims(deps.settings.state_dir)))
 
 
