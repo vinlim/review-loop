@@ -3,7 +3,8 @@ import pytest
 from review_loop.repositories.db import connect, migrate
 from review_loop.repositories import runs as runs_repo
 from review_loop.services.start import StartRefusal, start_run
-from review_loop.types.run import RunState
+from review_loop.services import run_control
+from review_loop.types.run import PauseReason, RunState
 from tests.fakes.clock import FakeClock
 from tests.fakes.git import FakeGit
 from tests.fakes.github import FakeGitHub
@@ -90,3 +91,29 @@ def test_a_second_inspect_only_start_reuses_the_active_dry_run(settings):
                        inspect_only=True)
 
     assert second.ok and second.value.id == first.id
+
+
+def test_a_run_without_a_stored_mode_that_paused_for_inspection_is_reused_by_inspect_only_and_refused_by_publish(settings):
+    conn, github, git = make(settings)
+    run = start_run(URL, settings=settings, conn=conn, github=github, git=git, clock=FakeClock(), versions={}).value
+    run.extra.pop("mode")
+    run_control.pause(conn, run, PauseReason.INSPECT_ONLY, FakeClock())
+
+    reused = start_run(URL, settings=settings, conn=conn, github=github, git=git, clock=FakeClock(), versions={}, inspect_only=True)
+    refused = start_run(URL, settings=settings, conn=conn, github=github, git=git, clock=FakeClock(), versions={})
+
+    assert reused.ok and reused.value.id == run.id
+    assert not refused.ok and refused.error == StartRefusal.MODE_CONFLICT
+
+
+def test_a_stop_and_a_start_within_the_same_second_get_distinct_ids(settings):
+    conn, github, git = make(settings)
+    clock = FakeClock()
+    first = start_run(URL, settings=settings, conn=conn, github=github, git=git, clock=clock, versions={}, inspect_only=True).value
+    run_control.stop(conn, first, clock)
+
+    second = start_run(URL, settings=settings, conn=conn, github=github, git=git, clock=clock, versions={})
+
+    assert second.ok and second.value.id == f"{first.id}-2"
+    assert second.value.extra["mode"] == "publish"
+    assert len(runs_repo.list_runs(conn)) == 2

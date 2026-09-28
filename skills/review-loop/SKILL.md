@@ -75,9 +75,10 @@ user what to add.
 A required check runs as an ordinary subprocess in the tool's worktree, with the environment the
 coordinator gives agents: the known token variables removed (GitHub, OpenAI, Anthropic, AWS, and
 anything named like a secret, password or API key; the Claude Code OAuth token stays), git
-credential helpers and `gh` configuration emptied, and `origin` pushes blocked for every repository
-the process touches, including temporary ones a test creates. Network access is not blocked and
-other variables pass through. So register only a check that is safe to run against code the PR
+credential helpers cleared at every level including the repository's own config, `gh`
+configuration emptied, and `origin` pushes blocked for every repository the process touches,
+including temporary ones a test creates. Network access is not blocked and other variables pass
+through. So register only a check that is safe to run against code the PR
 controls, and expect a suite that pushes, even to a local remote, to fail there although it passes
 in a shell.
 
@@ -91,8 +92,11 @@ Mode is fixed at start and cannot be changed later. Decide it from the request:
 
 - Words like "dry run", "inspect", "just look", "don't post", "what would it say" mean
   inspection: add `--inspect-only`. Nothing is posted or pushed.
-- Anything else means publication: the loop posts reviews and replies and pushes verified fixes
-  to the PR branch under the user's GitHub account. Say so in your first line.
+- Anything else means publication mode: permission to post reviews, post author responses and
+  push verified fixes to the PR branch under the user's GitHub account. Each of those is its own
+  switch in the repository's `[repositories.<name>.publication]` table (`post_reviews`,
+  `post_author_responses`, `push_verified_fixes`), and the loop performs only the ones set to
+  true. Read the table and say in your first line which effects are on.
 
 `start` reuses the active run for the PR when there is one, and refuses with `mode_conflict` when
 that run's mode differs from the flags you pass. It never switches a run's mode, so the one

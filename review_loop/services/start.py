@@ -31,7 +31,7 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
     active = runs_repo.find_active_run(conn, repo.name, ref.number)
     if active is not None:
         # A run's mode is fixed at enrolment; a start with the other flag must never drive it as is.
-        if active.extra.get("mode", "publish") != requested_mode(inspect_only):
+        if active.mode() != requested_mode(inspect_only):
             return Err(StartRefusal.MODE_CONFLICT)
         return Ok(active)
     pull = github.fetch_pull(ref)
@@ -44,7 +44,7 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
     git.fetch(str(repo.local_path), "origin", [pull.base_ref, pull.head_ref])
     now = clock.now()
     run = Run(
-        id=f"{repo.name}-{ref.number}-{now.strftime('%Y%m%d-%H%M%S')}",
+        id=unique_run_id(conn, f"{repo.name}-{ref.number}-{now.strftime('%Y%m%d-%H%M%S')}"),
         repo=repo.name, pr_number=ref.number, pr_url=ref.url, pr_author=pull.author,
         head_ref=pull.head_ref, base_ref=pull.base_ref, head_sha=pull.head_sha, base_sha=pull.base_sha,
         merge_base_sha=git.merge_base(str(repo.local_path), pull.base_sha, pull.head_sha),
@@ -59,6 +59,14 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
 
 def requested_mode(inspect_only: bool) -> str:
     return "inspect" if inspect_only else "publish"
+
+
+def unique_run_id(conn: sqlite3.Connection, base: str) -> str:
+    """Ids stay readable (repository, PR, second); a stop and a start within one second get a numbered suffix."""
+    candidate, n = base, 2
+    while runs_repo.get_run(conn, candidate) is not None:
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate
 
 
 def find_repository(settings: Settings, ref: PullRef) -> RepositoryConfig | None:

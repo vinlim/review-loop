@@ -161,7 +161,7 @@ def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspe
     if refusal != StartRefusal.MODE_CONFLICT:
         return f"refused: {refusal.value}"
     active = runs_repo.find_active_run(box.conn, repo_name, pr_number)
-    mode = active.extra.get("mode", "publish") if active else "another"
+    mode = active.mode() if active else "another"
     return (f"refused: mode_conflict (run {active.id if active else '?'} is {mode}; "
             f"stop it before starting in {requested_mode(inspect_only)} mode)")
 
@@ -227,7 +227,7 @@ def _drive(box: Container, run, lock=None) -> int:
             print(str(error), file=sys.stderr)
             return 3
     try:
-        final = run_loop(build_deps(box, inspect_only=run.extra.get("mode") == "inspect"), run, on_step=_print_transition)
+        final = run_loop(build_deps(box, inspect_only=run.mode() == "inspect"), run, on_step=_print_transition)
     finally:
         if owned:
             lock.release()
