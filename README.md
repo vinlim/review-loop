@@ -81,12 +81,15 @@ the agents with weaker read-only modes (`agy`, `opencode`) also rely on the envi
 them: no tokens, no credential helpers, pushes disabled. MCP servers are off for `claude` and `codex`.
 
 A checkout can also declare code for an agent CLI to run at startup, before its permissions apply.
-`claude -p` never asks for workspace trust, so `claude` starts with `--setting-sources user`: the
-checkout's `.claude/settings.json` and `.claude/settings.local.json` (hooks, `env`, helper commands)
-never load, and `--strict-mcp-config` keeps `.mcp.json` off. The same flag keeps the project's
-`CLAUDE.md` and `.claude/rules/` out of Claude's context. Every packet names the repository's
-`instruction_files` for the agent to read, so list `.claude/CLAUDE.md` there if a repository keeps
-its instructions in it. `codex` starts with `--ignore-user-config`, which also drops
+`claude -p` never asks for workspace trust, so `claude` starts with `--setting-sources ""` and reads
+no settings file. That covers the checkout's `.claude/settings.json` and `.claude/settings.local.json`,
+and your own `~/.claude/settings.json` too: a user hook runs with the checkout as its project
+directory, and any `env` block overrides the guards in the environment the tool builds. Only managed
+settings and the tool's own `--settings` apply, and `--strict-mcp-config` keeps `.mcp.json` off. Log in
+with `claude` or `claude setup-token`; an `apiKeyHelper` in your settings does not reach these runs.
+The flag also leaves every `CLAUDE.md` and `.claude/rules/` file out of Claude's context, yours
+included. Every packet names the repository's `instruction_files` for the agent to read, so list
+`.claude/CLAUDE.md` there if a repository keeps its instructions in it. `codex` starts with `--ignore-user-config`, which also drops
 your list of trusted projects. The worktree then counts as untrusted, and Codex loads none of its
 `.codex/` config, hooks, rules or MCP servers. Without the flag, a worktree inherits the trust you gave
 its main checkout.

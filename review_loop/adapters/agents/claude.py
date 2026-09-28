@@ -17,9 +17,11 @@ NO_ATTRIBUTION = '{"includeCoAuthoredBy": false, "attribution": {"commit": "", "
 READ_ONLY_DENIED = ["Edit", "Write", "NotebookEdit", "Bash(git commit:*)", "Bash(git push:*)", "Bash(gh:*)"]
 WRITE_DENIED = ["Bash(gh:*)", "Bash(git push:*)", "Bash(git commit:*)"]
 NO_MCP = '{"mcpServers":{}}'
-# -p never asks for workspace trust, so project and local settings would run the checkout's hooks, env and helper
-# commands at startup. This also drops the project's CLAUDE.md and rules; the packet names the instruction files.
-USER_SETTINGS_ONLY = "user"
+# No settings file loads, only managed settings and --settings. -p never asks for workspace trust, so project
+# settings would run the checkout's hooks at startup; a user hook runs with the checkout as its project directory, and
+# any settings env block overrides the guards in the coordinator's environment. CLAUDE.md files and rules drop out
+# too; the packet names the instruction files.
+NO_SETTINGS_FILES = ""
 
 
 class ClaudeAdapter:
@@ -59,7 +61,7 @@ class ClaudeAdapter:
         argv = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text,
                 "--model", request.model, "--effort", request.effort,
                 "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", NO_MCP,
-                "--setting-sources", USER_SETTINGS_ONLY, "--settings", NO_ATTRIBUTION]
+                "--setting-sources", NO_SETTINGS_FILES, "--settings", NO_ATTRIBUTION]
         if request.resume_session_id:
             argv += ["--resume", request.resume_session_id, "--fork-session"]
         for directory in request.read_dirs:

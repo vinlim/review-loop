@@ -75,14 +75,15 @@ def test_a_resumed_session_reapplies_the_same_restrictions(tmp_path):
 
 
 @pytest.mark.parametrize("tools_policy, resume", [("read-only", ""), ("write", ""), ("read-only", "sess-0")])
-def test_every_phase_loads_user_settings_only_so_the_checkout_cannot_run_hooks_at_startup(tmp_path, tools_policy, resume):
+def test_every_phase_loads_no_settings_files_so_no_hook_or_env_block_runs_at_startup(tmp_path, tools_policy, resume):
     process = FakeProcessRunner()
     process.script(["claude", "-p"], stdout=result_json())
 
     ClaudeAdapter(process).run(request(tmp_path, tools_policy=tools_policy, resume=resume))
 
     argv = process.calls[0]["argv"]
-    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert json.loads(argv[argv.index("--settings") + 1])["includeCoAuthoredBy"] is False
 
 
 def test_a_success_without_structured_output_is_malformed(tmp_path):
