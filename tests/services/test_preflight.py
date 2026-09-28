@@ -74,3 +74,14 @@ def test_the_probe_runs_in_an_empty_git_repository_under_the_state_dir_which_is_
     (workspace / ".git").mkdir(parents=True)
     probe(settings, tmp_path, agents(), process)
     assert len(process.calls) == 1
+
+
+def test_an_agent_that_answers_ok_false_fails_the_probe_with_its_answer(settings, tmp_path):
+    adapters = agents()
+    adapters["claude"].outputs.clear()
+    adapters["claude"].reply({"ok": False})
+
+    probes = probe(settings, tmp_path, adapters)
+
+    author = probes[1]
+    assert not author.ok and author.detail.endswith('answered {"ok": false} instead of {"ok": true}')

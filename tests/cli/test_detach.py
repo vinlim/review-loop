@@ -38,7 +38,7 @@ def test_start_detach_enrols_the_run_and_hands_it_to_a_coordinator_in_its_own_se
     assert f"run {run_id} (preparing, publish) for {URL}" in out.splitlines()[0]
     assert "coordinator pid 4242" in out and f"review-loop wait {run_id}" in out
     call = box.spawn.calls[0]
-    assert call["argv"] == [sys.executable, "-m", "review_loop.cli.main", "drive", run_id]
+    assert call["argv"] == [sys.executable, "-m", "review_loop.cli.main", "drive", run_id, "--no-preflight"]
     assert call["log_path"] == str(settings.state_dir / "runs" / run_id / "coordinator.log")
     assert runs_repo.get_run(box.conn, run_id).state == RunState.PREPARING
 
@@ -64,7 +64,7 @@ def test_resume_detach_hands_a_paused_run_to_a_detached_coordinator(settings, ca
 
     out = capsys.readouterr().out
     assert f"resumed {run_id} at preparing" in out and "coordinator pid 4242" in out
-    assert box.spawn.calls[0]["argv"][-2:] == ["drive", run_id]
+    assert box.spawn.calls[0]["argv"][-3:] == ["drive", run_id, "--no-preflight"]
 
 
 def test_drive_runs_an_enrolled_run_in_this_process_to_its_end(settings, capsys):
@@ -74,7 +74,7 @@ def test_drive_runs_an_enrolled_run_in_this_process_to_its_end(settings, capsys)
     box.github.add_pull(1004, state="closed")
     capsys.readouterr()
 
-    assert main(["drive", run_id], container=box) == 1
+    assert main(["drive", run_id, "--no-preflight"], container=box) == 1
 
     assert runs_repo.get_run(box.conn, run_id).state == RunState.CANCELLED
     assert f"run {run_id}: cancelled" in capsys.readouterr().out
@@ -103,7 +103,7 @@ def test_a_coordinator_crash_pauses_the_run_with_the_traceback_recorded_for_show
     box.github.fetch_pull = explode
     capsys.readouterr()
 
-    assert main(["drive", run_id], container=box) == 1
+    assert main(["drive", run_id, "--no-preflight"], container=box) == 1
 
     run = runs_repo.get_run(box.conn, run_id)
     assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.COORDINATOR_FAILED and run.resume_state == RunState.PREPARING
@@ -117,3 +117,115 @@ def test_the_cli_runs_as_a_module_which_is_how_a_detached_coordinator_starts():
     completed = subprocess.run([sys.executable, "-m", "review_loop.cli.main", "--help"], capture_output=True, text=True)
 
     assert completed.returncode == 0 and "drive" in completed.stdout
+
+
+# --- the lock covers the decision to resume or drive, not just the drive -------------------------------------
+
+def test_resume_refuses_without_touching_the_run_while_a_coordinator_holds_its_lock(settings, capsys):
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    main(["pause", run_id], container=box)
+    capsys.readouterr()
+    lock = RunLock(settings.state_dir, "webapp", 1004)
+    lock.acquire()
+    try:
+        assert main(["resume", run_id], container=box) == 3
+    finally:
+        lock.release()
+
+    assert runs_repo.get_run(box.conn, run_id).state == RunState.PAUSED
+    assert f"review-loop wait {run_id}" in capsys.readouterr().err
+
+
+def test_resume_decides_from_the_run_as_it_is_once_the_lock_is_held(settings, capsys, monkeypatch):
+    """Another coordinator may finish the run between the read and the lock: the resume must see that, not its stale copy."""
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    main(["pause", run_id], container=box)
+    original_acquire = RunLock.acquire
+
+    def finish_then_acquire(self):
+        run = runs_repo.get_run(box.conn, run_id)
+        run.state, run.pause_reason, run.resume_state = RunState.COMPLETE, None, None
+        runs_repo.save_run(box.conn, run)
+        original_acquire(self)
+
+    monkeypatch.setattr(RunLock, "acquire", finish_then_acquire)
+    capsys.readouterr()
+
+    assert main(["resume", run_id], container=box) == 2
+
+    assert runs_repo.get_run(box.conn, run_id).state == RunState.COMPLETE
+    assert "is complete" in capsys.readouterr().err
+
+
+def test_drive_decides_from_the_run_as_it_is_once_the_lock_is_held(settings, capsys, monkeypatch):
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    original_acquire = RunLock.acquire
+
+    def finish_then_acquire(self):
+        run = runs_repo.get_run(box.conn, run_id)
+        run.state = RunState.COMPLETE
+        runs_repo.save_run(box.conn, run)
+        original_acquire(self)
+
+    monkeypatch.setattr(RunLock, "acquire", finish_then_acquire)
+    capsys.readouterr()
+
+    assert main(["drive", run_id, "--no-preflight"], container=box) == 2
+
+    assert runs_repo.get_run(box.conn, run_id).state == RunState.COMPLETE
+    assert not any(call[0] == "worktree_add" for call in box.git.calls), "the stale copy was never driven"
+
+
+def test_drive_refuses_while_a_coordinator_holds_the_lock(settings, capsys):
+    from review_loop.services.locks import RunLock
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    lock = RunLock(settings.state_dir, "webapp", 1004)
+    lock.acquire()
+    try:
+        assert main(["drive", run_id, "--no-preflight"], container=box) == 3
+    finally:
+        lock.release()
+
+    assert runs_repo.get_run(box.conn, run_id).state == RunState.PREPARING
+
+
+# --- drive probes too, unless its caller already did ------------------------------------------------------
+
+def test_drive_probes_the_agents_before_its_first_phase(settings, capsys):
+    from tests.services.test_preflight import agents
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run_id = runs_repo.list_runs(box.conn)[0].id
+    box.agents = agents(author_ok=False)
+    box.process.script(["git", "init"])
+    capsys.readouterr()
+
+    assert main(["drive", run_id], container=box) == 1
+
+    run = runs_repo.get_run(box.conn, run_id)
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.AGENT_UNAVAILABLE
+    assert not any(call[0] == "worktree_add" for call in box.git.calls), "no phase ran"
+
+
+def test_a_detached_coordinator_is_told_its_parent_already_probed(settings):
+    box = detachable(settings)
+
+    main(["start", URL, "--detach"], container=box)
+
+    assert box.spawn.calls[0]["argv"][-3:] == ["drive", runs_repo.list_runs(box.conn)[0].id, "--no-preflight"]

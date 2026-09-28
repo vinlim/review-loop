@@ -80,7 +80,8 @@ def _ask(adapter, choice: AgentChoice, cwd: Path, env: dict[str, str], output_di
 
 
 def _probe(role: str, choice: AgentChoice, result) -> AgentProbe:
-    if result.ok:
+    """A schema-valid answer is the adapter working; only the answer asked for is the agent ready."""
+    if result.ok and result.value.data.get("ok") is True:
         return AgentProbe(role, choice.agent, choice.model, choice.effort, True, f"{role} {choice.agent} answered with {choice.model} at {choice.effort}")
-    return AgentProbe(role, choice.agent, choice.model, choice.effort, False,
-                      f"{role} {choice.agent} cannot serve {choice.model} at {choice.effort}: {result.error.detail}")
+    detail = f'answered {json.dumps(result.value.data)} instead of {{"ok": true}}' if result.ok else result.error.detail
+    return AgentProbe(role, choice.agent, choice.model, choice.effort, False, f"{role} {choice.agent} cannot serve {choice.model} at {choice.effort}: {detail}")

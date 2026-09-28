@@ -16,8 +16,9 @@ from review_loop.cli.render import render_show, render_status
 from review_loop.config.settings import ConfigError
 from review_loop.repositories import runs as runs_repo
 from review_loop.services import run_control
-from review_loop.services.locks import RunLock
+from review_loop.services.locks import AlreadyLocked, RunLock
 from review_loop.services.start import StartRefusal, requested_mode, start_run
+from review_loop.types.result import Err, Ok, Result
 from review_loop.types.run import WORKING_STATES, PauseReason
 
 
@@ -71,6 +72,7 @@ def _add_run_commands(commands) -> None:
     start.set_defaults(handler=command_start)
     drive = commands.add_parser("drive", help="drive an enrolled run in this process (what --detach starts)")
     drive.add_argument("run_id")
+    drive.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent; --detach passes this, having probed")
     drive.set_defaults(handler=command_drive)
     status = commands.add_parser("status", help="list runs")
     status.set_defaults(handler=command_status)
@@ -176,7 +178,7 @@ def command_start(args, box: Container) -> int:
         if not args.no_preflight and _preflight(box, run):
             return 1
         if not args.detach:
-            return _drive(box, run, lock=lock)
+            return _drive(box, run, lock)
     finally:
         lock.release()
     return _detach(box, run)
@@ -204,20 +206,42 @@ def _detach(box: Container, run) -> int:
     log_path = box.settings.state_dir / "runs" / run.id / "coordinator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **({"CLAUDE_CODE_OAUTH_TOKEN": box.claude_oauth_token} if box.claude_oauth_token else {})}
-    pid = box.spawn([sys.executable, "-m", "review_loop.cli.main", "drive", run.id], cwd=str(box.home), env=env, log_path=log_path)
+    argv = [sys.executable, "-m", "review_loop.cli.main", "drive", run.id, "--no-preflight"]  # this process probed, or was told not to
+    pid = box.spawn(argv, cwd=str(box.home), env=env, log_path=log_path)
     print(f"coordinator pid {pid} drives it in its own session; log: {log_path}; follow with: review-loop wait {run.id}")
     return 0
 
 
 def command_drive(args, box: Container) -> int:
-    run = _require_run(box, args.run_id)
+    claimed = _claim(box, args.run_id)
+    if not claimed.ok:
+        return claimed.error
+    run, lock = claimed.value
+    try:
+        if run.state not in WORKING_STATES:
+            hint = f"; resume it with `review-loop resume {run.id}`" if run.state.value == "paused" else ""
+            print(f"run {run.id} is {run.state.value}, not in a working state{hint}", file=sys.stderr)
+            return 2
+        if not args.no_preflight and _preflight(box, run):
+            return 1
+        return _drive(box, run, lock)
+    finally:
+        lock.release()
+
+
+def _claim(box: Container, run_id: str) -> Result[tuple, int]:
+    """The run as it stands once this process holds its lock, with the lock. What was read before the lock may have moved
+    or finished under another coordinator, so only the copy read after counts. The error is the exit code, already explained."""
+    run = _require_run(box, run_id)
     if run is None:
-        return 2
-    if run.state not in WORKING_STATES:
-        hint = f"; resume it with `review-loop resume {run.id}`" if run.state.value == "paused" else ""
-        print(f"run {run.id} is {run.state.value}, not in a working state{hint}", file=sys.stderr)
-        return 2
-    return _drive(box, run)
+        return Err(2)
+    lock = _lock(box, run)
+    try:
+        lock.acquire()
+    except AlreadyLocked as error:
+        print(f"{error}; a coordinator is driving run {run.id}, follow it with `review-loop wait {run.id}`", file=sys.stderr)
+        return Err(3)
+    return Ok((runs_repo.get_run(box.conn, run_id), lock))
 
 
 def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspect_only: bool) -> str:
@@ -278,22 +302,26 @@ def command_pause(args, box: Container) -> int:
 
 
 def command_resume(args, box: Container) -> int:
-    run = _require_run(box, args.run_id)
-    if run is None:
-        return 2
-    result = run_control.resume(box.conn, run, box.clock, unattended=_unattended(box, run))
-    if not result.ok:
-        driven = f"; a coordinator holds its lock, follow it with `review-loop wait {run.id}`" if run.state in WORKING_STATES else ""
-        print(result.error + driven, file=sys.stderr)
-        return 2
-    print(f"resumed {run.id} at {result.value.state.value}")
-    if getattr(args, "no_run", False):
-        return 0
-    if not getattr(args, "no_preflight", False) and _preflight(box, result.value):
-        return 1
-    if getattr(args, "detach", False):
-        return _detach(box, result.value)
-    return _drive(box, result.value)
+    claimed = _claim(box, args.run_id)
+    if not claimed.ok:
+        return claimed.error
+    run, lock = claimed.value
+    try:
+        # With the lock held, a working state means no coordinator has this run: it continues from that state.
+        result = run_control.resume(box.conn, run, box.clock, unattended=run.state in WORKING_STATES)
+        if not result.ok:
+            print(result.error, file=sys.stderr)
+            return 2
+        print(f"resumed {run.id} at {result.value.state.value}")
+        if args.no_run:
+            return 0
+        if not args.no_preflight and _preflight(box, result.value):
+            return 1
+        if not args.detach:
+            return _drive(box, result.value, lock)
+    finally:
+        lock.release()
+    return _detach(box, result.value)
 
 
 def command_stop(args, box: Container) -> int:
@@ -305,26 +333,15 @@ def command_stop(args, box: Container) -> int:
     return 0
 
 
-def _drive(box: Container, run, lock=None) -> int:
+def _drive(box: Container, run, lock: RunLock) -> int:
+    """Run the loop on a run this process has claimed; `lock` is held by the caller for the whole drive."""
     from review_loop.cli.wiring import build_deps
-    from review_loop.services.locks import AlreadyLocked, RunLock
     from review_loop.services.run_coordinator import run_loop
 
-    owned = lock is None
-    lock = lock or RunLock(box.settings.state_dir, run.repo, run.pr_number)
-    if owned:
-        try:
-            lock.acquire()
-        except AlreadyLocked as error:
-            print(str(error), file=sys.stderr)
-            return 3
     try:
         final = run_loop(build_deps(box, inspect_only=run.mode() == "inspect"), run, on_step=_print_transition)
     except Exception:  # noqa: BLE001 - a crash of any kind must leave a resumable, explained run behind
         final = _pause_after_crash(box, run)
-    finally:
-        if owned:
-            lock.release()
     return _report_final(box, final)
 
 
