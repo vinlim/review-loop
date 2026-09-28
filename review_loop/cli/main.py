@@ -13,7 +13,7 @@ from review_loop.cli.render import render_show, render_status
 from review_loop.config.settings import ConfigError
 from review_loop.repositories import runs as runs_repo
 from review_loop.services import run_control
-from review_loop.services.start import start_run
+from review_loop.services.start import StartRefusal, requested_mode, start_run
 from review_loop.types.run import PauseReason
 
 
@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None, container: Container | None = None) -> i
     try:
         box = container or build_container()
     except ConfigError as error:
-        print(f"config error: {error}\nRegister a repository first: review-loop repo add <path>", file=sys.stderr)
+        print(f"config error: {error}", file=sys.stderr)
         return 2
     return args.handler(args, box)
 
@@ -145,15 +145,25 @@ def command_start(args, box: Container) -> int:
         result = start_run(args.url, settings=box.settings, conn=box.conn, github=box.github, git=box.git, clock=box.clock,
                            versions=box.versions, author_session=args.author_session, inspect_only=args.inspect_only)
         if not result.ok:
-            print(f"refused: {result.error.value}", file=sys.stderr)
+            print(_refusal_line(box, repo.name, pull_ref.number, result.error, args.inspect_only), file=sys.stderr)
             return 2
         run = result.value
-        print(f"run {run.id} ({run.state.value}, {run.extra.get('mode', 'publish')}) for {run.pr_url}")
+        print(f"run {run.id} ({run.state.value}, {run.mode()}) for {run.pr_url}")
         if args.no_run:
             return 0
         return _drive(box, run, lock=lock)
     finally:
         lock.release()
+
+
+def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspect_only: bool) -> str:
+    """A mode conflict names the run in the way; the operator has to stop it before any start in the other mode works."""
+    if refusal != StartRefusal.MODE_CONFLICT:
+        return f"refused: {refusal.value}"
+    active = runs_repo.find_active_run(box.conn, repo_name, pr_number)
+    mode = active.mode() if active else "another"
+    return (f"refused: mode_conflict (run {active.id if active else '?'} is {mode}; "
+            f"stop it before starting in {requested_mode(inspect_only)} mode)")
 
 
 def command_status(args, box: Container) -> int:
@@ -167,7 +177,8 @@ def command_show(args, box: Container) -> int:
         return 2
     from review_loop.repositories import findings as findings_repo
 
-    print(render_show(run, findings_repo.list_findings(box.conn, run.id)))
+    repo = box.settings.repositories.get(run.repo)
+    print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None))
     return 0
 
 
@@ -217,7 +228,7 @@ def _drive(box: Container, run, lock=None) -> int:
             print(str(error), file=sys.stderr)
             return 3
     try:
-        final = run_loop(build_deps(box, inspect_only=run.extra.get("mode") == "inspect"), run, on_step=_print_transition)
+        final = run_loop(build_deps(box, inspect_only=run.mode() == "inspect"), run, on_step=_print_transition)
     finally:
         if owned:
             lock.release()

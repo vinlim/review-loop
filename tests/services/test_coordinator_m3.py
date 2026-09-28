@@ -6,8 +6,9 @@ from review_loop.repositories import verification as verification_repo
 from review_loop.services.run_coordinator import run_loop, step
 from review_loop.types.result import Err
 from review_loop.types.run import PauseReason, RunState
+from tests.fakes.agent import FakeAgent
 from tests.fakes.notifier import FakeNotifier
-from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness
+from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, Harness, with_review
 
 LOGGER = "services/notifier/src/logger.ts"
 NUMBERS = "app/Support/JsonNumbers.php"
@@ -67,6 +68,24 @@ def to_publishing(h):
 
 
 # --- fix ------------------------------------------------------------------------------------------
+
+def test_after_a_switch_of_author_agent_the_new_agent_starts_fresh_then_resumes_its_own_session(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    opencode = FakeAgent()
+    h.deps.agents["opencode"] = opencode
+    h.deps.settings = with_review(h.deps.settings, author="opencode", author_model="", author_effort="")
+    opencode.reply(ASSESS_984, session_id="ses-opencode")
+    opencode.reply(FIX)
+
+    step(h.deps, step(h.deps, run))
+
+    assess, fix = opencode.requests
+    assert assess.resume_session_id == "" and "no session memory" in assess.prompt
+    assert fix.resume_session_id == "ses-opencode"
+
 
 def test_the_fix_request_carries_only_accepted_findings_the_contract_and_write_access(settings, tmp_path):
     h = harness(settings, tmp_path)
@@ -355,3 +374,59 @@ def test_e2e_a_pr_closed_externally_stops_writes_and_keeps_history(settings, tmp
 
     assert run.state == RunState.CANCELLED and len(h.github.writes) == writes
     assert len(h.findings()) == 2
+
+
+# --- the final report -----------------------------------------------------------------------------
+
+def run_to_completion(h):
+    h.reviewer.reply(REVIEW_984)
+    h.author.reply(ASSESS_984)
+    h.author.reply(FIX)
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+    return run_loop(h.deps, h.run)
+
+
+def test_e2e_the_final_report_tells_the_run_pass_by_pass_with_the_commit_read_back_from_git(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    h.git.changed = [LOGGER, NUMBERS]
+
+    run = run_to_completion(h)
+
+    sha = run.head_sha[:9]
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    assert f"- `{sha}` fix: redact URLs once and bound the report (pass 1): {LOGGER}, {NUMBERS}" in report
+    assert f"Commit `{sha}` addressed R1-F1 and R1-F2. Checks passed." in report
+    assert "The loop pushed 1 commit touching 2 files." in report
+    final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
+    assert "## Pass by pass" in final and "## Commits" in final
+
+
+def test_the_final_report_is_written_even_when_git_cannot_describe_a_commit(settings, tmp_path):
+    h = harness(settings, tmp_path)
+
+    def unreadable(*args):
+        raise RuntimeError("git log failed")
+
+    push = h.git.on_push
+    h.git.on_push = lambda branch, sha: (push(branch, sha), setattr(h.git, "commit_info", unreadable))
+
+    run = run_to_completion(h)
+
+    assert run.state == RunState.COMPLETE
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    assert f"- `{run.head_sha[:9]}` (title unavailable) (pass 1)" in report
+    assert "The loop pushed 1 commit. " in report
+
+
+def test_a_final_report_longer_than_a_github_comment_is_posted_cut_and_kept_whole_on_disk(settings, tmp_path, monkeypatch):
+    monkeypatch.setattr("review_loop.services.completion_phase.COMMENT_LIMIT", 600)
+    h = harness(settings, tmp_path)
+
+    run = run_to_completion(h)
+
+    final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
+    report_path = tmp_path / "runs" / run.id / "report.md"
+    assert "The report was cut to fit a GitHub comment" in final and f"`runs/{run.id}/report.md`" in final
+    assert str(tmp_path) not in final
+    assert len(final.split("<!-- review-loop")[0]) <= 600
+    assert "## Next step" in report_path.read_text()

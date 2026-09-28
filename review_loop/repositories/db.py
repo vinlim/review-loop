@@ -61,6 +61,7 @@ MIGRATIONS: list[str] = [
     );
     """,
     "alter table findings add column blocking integer not null default 1",
+    "alter table runs add column agents_json text not null default '{}'",
 ]
 
 

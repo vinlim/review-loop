@@ -63,8 +63,8 @@ repository, a PHP and Node application, was registered first and supplies the wo
 | Invocation | `review-loop start <PR URL>`; label-driven enrollment later |
 | Workspace | one dedicated worktree per enrolled PR, on a tool-owned local branch |
 | Agent execution | sequential within a PR; one active PR run at a time |
-| Reviewer | Codex, `gpt-6-astra`, reasoning `ultra`, sandbox `read-only`; any registered agent per repository (section 32) |
-| Assessor and fixer | Claude, `claude-fable-5-1`, effort `high`; assessment read-only, fix phase write; any registered agent per repository |
+| Reviewer | Codex, `gpt-5.6-sol`, reasoning `xhigh`, sandbox `read-only`; any registered agent per repository (section 32) |
+| Assessor and fixer | Claude, `claude-opus-5-5`, effort `xhigh`; assessment read-only, fix phase write; any registered agent per repository |
 | Alignment | automatic: Codex note, Claude assessment, then blind arbitration by both models with labels swapped |
 | Review budget | 7 review passes (the observed maximum; median is 3), configurable per repository and per run |
 | Fix budget | 2 editing attempts per assessment: initial fix plus one repair after failed checks |
@@ -153,10 +153,10 @@ format = [["vendor/bin/pint", "--dirty", "--format", "agent"]]
 max_review_passes = 3
 max_fix_attempts = 2
 max_alignment_exchanges = 1
-reviewer_model = "gpt-6-astra"
-reviewer_effort = "ultra"
-author_model = "claude-fable-5-1"
-author_effort = "high"
+reviewer_model = "gpt-5.6-sol"
+reviewer_effort = "xhigh"
+author_model = "claude-opus-5-5"
+author_effort = "xhigh"
 
 [repositories.webapp.publication]
 post_reviews = true
@@ -358,6 +358,14 @@ Within budget, continue with C. When the last allowed pass leaves work open, sto
 final report: open `ISSUE` and lower items become accepted exceptions with both positions
 recorded; an open `BLOCKER` makes the outcome `blocked`. No further fix is attempted. Before completion, recheck GitHub and the workspace; a
 clean review is scoped to a commit and a discussion state.
+
+The final report is built from the run's records, never written by a model, so every id, commit and
+count in it is one the tool recorded. It opens with an overview (passes, elapsed time, how the findings
+ended, commits made, the last checks), then gives each finding's outcome, every exception with both
+positions, the findings closed without a verified fix with the author's and reviewer's own words in quotes, the
+run pass by pass, and each fix commit with its title and files read back from git. It is saved as
+`report.md` and posted once as a PR comment. GitHub caps a comment at 65,536 characters, so a longer
+report is posted cut at a line with the path of the full file.
 
 ## 11. Finding lifecycle and identity
 

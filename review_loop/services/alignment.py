@@ -13,8 +13,8 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.services.completion_phase import complete_run
 from review_loop.services.phase_support import (
-    ASSESS_ACTIONS_TEXT, Deps, alignment_block, author_agent, apply_events, decisions, events_by_finding, inspect_only, instruction_files, now,
-    pass_dir, pause, pull_values, ref, remote_head, repo, request, reviewer_agent, run_agent, save, template, verification_lines,
+    ASSESS_ACTIONS_TEXT, Deps, alignment_block, apply_events, author_resume, decisions, events_by_finding, inspect_only, instruction_files,
+    keep_author_session, now, pass_dir, pause, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.phase_support import publisher as make_publisher
 from review_loop.types.findings import Finding
@@ -113,7 +113,7 @@ def _alignment_note(deps: Deps, run: Run, disputed: list[Finding], directory) ->
                                                       "signals": "; ".join(str(s) for s in signals)})
     phase_request = request(deps, repo_config, run, "align", prompt, "alignment", directory / "align", "read-only",
                             repo_config.review.reviewer_model, _judging_effort(repo_config.review.reviewer_effort))
-    outcome = run_agent(deps, run, reviewer_agent(deps, repo_config), phase_request, run.pass_no, state=RunState.ALIGNING)
+    outcome = run_agent(deps, run, repo_config.review.reviewer, phase_request, run.pass_no, state=RunState.ALIGNING)
     if not outcome.ok:
         deps.extra["last_pause"] = outcome.error
         return None
@@ -132,13 +132,13 @@ def _assess_against_note(deps: Deps, run: Run, disputed: list[Finding], director
     ids = [f.id for f in disputed]
     prompt = _note_assessment_prompt(deps, run, repo_config, directory, ids)
     phase_request = request(deps, repo_config, run, "assess", prompt, "assessment", directory / "align-assess", "read-only",
-                            repo_config.review.author_model, repo_config.review.author_effort, resume=run.author_session)
-    outcome = run_agent(deps, run, author_agent(deps, repo_config), phase_request, run.pass_no, state=RunState.ALIGNING,
+                            repo_config.review.author_model, repo_config.review.author_effort, resume=author_resume(run, repo_config))
+    outcome = run_agent(deps, run, repo_config.review.author, phase_request, run.pass_no, state=RunState.ALIGNING,
                         validate=lambda data: validate_dispositions(ids, data["dispositions"]))
     if not outcome.ok:
         deps.extra["last_pause"] = outcome.error
         return None
-    run.author_session = outcome.value.session_id or run.author_session
+    keep_author_session(run, repo_config, outcome.value.session_id)
     return _apply_note_dispositions(deps, run, disputed, outcome.value.data["dispositions"])
 
 
@@ -153,7 +153,8 @@ def _note_assessment_prompt(deps: Deps, run: Run, repo_config, directory, ids: l
     (directory / "packet-align-assess.md").write_text(packet)
     return fill_template(template(deps, "assess"), {
         **pull_values(pull, run), "packet_path": str(directory / "packet-align-assess.md"),
-        "authorship_line": "This session continues the one that wrote the PR." if run.author_session else "Assess from the code and the packet.",
+        "authorship_line": ("This session continues the one that wrote the PR." if author_resume(run, repo_config)
+                            else "Assess from the code and the packet."),
         "alignment_block": alignment_block(deps, run),
     })
 
@@ -211,17 +212,17 @@ def _run_arbiters(deps: Deps, run: Run, finding: Finding, directory) -> list[tup
                    "finding": f"{finding.id} [{finding.severity}] {finding.title} at {finding.file}:{finding.line}. Protected behaviour: {finding.protected_behaviour}"}
     choices = []
     review = repo_config.review
-    for agent_name, agent, values, model, effort in (
-            (reviewer_name, reviewer_agent(deps, repo_config), first_values, review.reviewer_model, review.reviewer_effort),
-            (author_name, author_agent(deps, repo_config), second_values, review.author_model, review.author_effort)):
+    for label, agent_name, values, model, effort in (
+            (reviewer_name, review.reviewer, first_values, review.reviewer_model, review.reviewer_effort),
+            (author_name, review.author, second_values, review.author_model, review.author_effort)):
         prompt = fill_template(template(deps, "arbitrate"), {**base_values, "position_a": values["position_a"], "position_b": values["position_b"]})
-        phase_request = request(deps, repo_config, run, "arbitrate", prompt, "arbitration", directory / f"arbitrate-{finding.id}-{agent_name}",
+        phase_request = request(deps, repo_config, run, "arbitrate", prompt, "arbitration", directory / f"arbitrate-{finding.id}-{label}",
                                 "read-only", model, _judging_effort(effort))
-        outcome = run_agent(deps, run, agent, phase_request, run.pass_no, state=RunState.ALIGNING)
+        outcome = run_agent(deps, run, agent_name, phase_request, run.pass_no, state=RunState.ALIGNING)
         if not outcome.ok:
             deps.extra["last_pause"] = outcome.error
             return None
-        choices.append((agent_name, map_choice(outcome.value.data["decision"], values), outcome.value.data))
+        choices.append((label, map_choice(outcome.value.data["decision"], values), outcome.value.data))
     return choices
 
 

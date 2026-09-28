@@ -19,7 +19,7 @@ from review_loop.repositories import runs as runs_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services import run_control
 from review_loop.services.workspace import ensure_shims
-from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
+from review_loop.types.agents import AGENT_PROFILES, AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.findings import Finding
 from review_loop.types.pull_request import PullRef, PullRequest
 from review_loop.types.result import Err, Ok, Result
@@ -50,21 +50,32 @@ class Deps:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def reviewer_agent(deps: Deps, repo_config: RepositoryConfig) -> Any:
-    return deps.agents[repo_config.review.reviewer]
+def author_resume(run: Run, repo_config: RepositoryConfig) -> str:
+    """The author session to resume. A session belongs to the CLI that made it, so after the author agent changes
+    mid-run the new one starts fresh instead of failing on every resume."""
+    owner = run.extra.get("author_session_agent") or (run.agents["author"].agent if "author" in run.agents else repo_config.review.author)
+    return run.author_session if owner == repo_config.review.author else ""
 
 
-def author_agent(deps: Deps, repo_config: RepositoryConfig) -> Any:
-    return deps.agents[repo_config.review.author]
+def keep_author_session(run: Run, repo_config: RepositoryConfig, session_id: str) -> None:
+    if session_id:
+        run.author_session, run.extra["author_session_agent"] = session_id, repo_config.review.author
 
 
-def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: int, state: RunState,
+def run_agent(deps: Deps, run: Run, agent_name: str, request: PhaseRequest, pass_no: int, state: RunState,
               validate: Callable[[dict], Result] | None = None) -> Result[PhaseOutput, PauseReason]:
     """Two attempts for retryable failures of a read-only phase; a write phase gets one, because a second run
     on a partially edited workspace is never safe. A usage or auth failure pauses at once.
 
-    A read-only phase that moved HEAD or changed the working tree pauses whatever the agent returned: not every
-    CLI can be held to read-only by its flags, so the coordinator checks the outcome itself."""
+    An agent never starts on a checkout whose PR or fix changed a file its CLI runs at startup, since that code
+    runs outside the agent's permissions. A read-only phase that moved HEAD or changed the working tree pauses
+    whatever the agent returned: not every CLI can be held to read-only by its flags, so the coordinator checks
+    the outcome itself."""
+    untrusted = startup_changes(deps, run, agent_name, request.cwd)
+    if untrusted:
+        run.extra["scripts_changed"] = untrusted
+        return Err(PauseReason.SCRIPTS_CHANGED)
+    agent = deps.agents[agent_name]
     read_only = request.tools_policy != "write"
     attempts = 2 if read_only else 1
     before = worktree_state(deps, request.cwd) if read_only else None
@@ -72,9 +83,10 @@ def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: 
         attempt_request = dataclasses.replace(request, output_dir=str(Path(request.output_dir) / f"attempt-{attempt}"))
         attempt_id = phases_repo.record_attempt(deps.conn, run.id, request.phase, pass_no, attempt, now(deps), input_path=attempt_request.output_dir)
         result = agent.run(attempt_request)
-        if read_only and worktree_state(deps, request.cwd) != before:
+        breach = read_only_breach(deps, request.cwd, before) if read_only else ""
+        if breach:
             phases_repo.finish_attempt(deps.conn, attempt_id, "failed", now(deps),
-                                       error={"kind": PauseReason.READ_ONLY_VIOLATED, "detail": "the worktree changed during a read-only phase"})
+                                       error={"kind": PauseReason.READ_ONLY_VIOLATED, "detail": breach})
             return Err(PauseReason.READ_ONLY_VIOLATED)
         if result.ok and validate is not None:
             check = validate(result.value.data)
@@ -93,6 +105,25 @@ def run_agent(deps: Deps, run: Run, agent: Any, request: PhaseRequest, pass_no: 
 
 def worktree_state(deps: Deps, path: str) -> tuple[str, list[str]]:
     return deps.git.head_sha(path), sorted(deps.git.working_changed_files(path))
+
+
+def read_only_breach(deps: Deps, path: str, before: tuple[str, list[str]]) -> str:
+    """Why the worktree no longer matches its state before a read-only phase, or "" when it does. A worktree git
+    can no longer read counts: the agent may have removed or rewritten its .git."""
+    try:
+        after = worktree_state(deps, path)
+    except RuntimeError as error:
+        return f"the worktree cannot be inspected after a read-only phase: {error}"
+    return "the worktree changed during a read-only phase" if after != before else ""
+
+
+def startup_changes(deps: Deps, run: Run, agent_name: str, path: str) -> list[str]:
+    """Files the PR or a fix changed that this agent's CLI would load and run at startup."""
+    profile = AGENT_PROFILES[agent_name]
+    if not profile.startup_files:
+        return []
+    changed = set(deps.git.changed_files(path, run.merge_base_sha, "HEAD")) | set(deps.git.working_changed_files(path))
+    return sorted(changed_path for changed_path in changed if profile.runs_at_startup(changed_path))
 
 
 def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: str, schema: str, output_dir: Path, policy: str,
@@ -199,12 +230,9 @@ def externally_controlled(persisted: Run) -> bool:
 
 def inspect_only(deps: Deps, run: Run) -> bool:
     """Inspect mode belongs to the run: set at enrolment, never changed by a later invocation."""
-    mode = run.extra.get("mode")
-    if mode is None:
-        paused_for_inspection = run.state == RunState.PAUSED and run.pause_reason == PauseReason.INSPECT_ONLY
-        mode = "inspect" if (deps.inspect_only or paused_for_inspection) else "publish"
-        run.extra["mode"] = mode
-    return mode == "inspect"
+    if not run.extra.get("mode"):
+        run.extra["mode"] = "inspect" if deps.inspect_only else run.mode()
+    return run.extra["mode"] == "inspect"
 
 
 def remote_head(run: Run) -> str:
