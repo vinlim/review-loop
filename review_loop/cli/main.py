@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from review_loop.cli.container import Container, build_container, default_home
+from review_loop.cli.container import Container, build_container, claim_claude_oauth_token, default_home
 from review_loop.cli.doctor import run_doctor
 from review_loop.cli.register import append_registration, registration_toml
 from review_loop.cli.render import render_show, render_status
@@ -18,6 +18,7 @@ from review_loop.types.run import PauseReason
 
 
 def main(argv: list[str] | None = None, container: Container | None = None) -> int:
+    claude_oauth_token = claim_claude_oauth_token()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "repo":
@@ -25,7 +26,7 @@ def main(argv: list[str] | None = None, container: Container | None = None) -> i
     if args.command == "restore":
         return command_restore(args)
     try:
-        box = container or build_container()
+        box = container or build_container(claude_oauth_token=claude_oauth_token)
     except ConfigError as error:
         print(f"config error: {error}\nRegister a repository first: review-loop repo add <path>", file=sys.stderr)
         return 2

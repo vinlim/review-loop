@@ -48,3 +48,15 @@ def test_append_registration_creates_the_config_then_adds_a_second_repository(tm
     settings = load_settings(config)
     assert set(settings.repositories) == {"webapp", "other"}
     assert settings.state_dir == tmp_path / "state"
+
+
+def test_append_registration_creates_a_private_home(tmp_path):
+    import stat
+
+    from review_loop.cli.register import append_registration
+
+    home = tmp_path / "home" / ".review-loop"
+
+    append_registration(home / "config.toml", "[repositories.x]\n", state_dir=home)
+
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700

@@ -32,3 +32,12 @@ def test_the_author_session_finder_scans_the_claude_projects_dir(settings, tmp_p
 
     assert deps.find_author_session("claude/change") == "abc"
     assert deps.find_author_session("other") == ""
+
+
+def test_build_deps_hands_the_claimed_login_to_the_claude_adapter(settings):
+    box = container(settings)
+    box.claude_oauth_token = "author-token"
+
+    deps = build_deps(box, inspect_only=False, platform="linux")
+
+    assert deps.author.oauth_token == "author-token"

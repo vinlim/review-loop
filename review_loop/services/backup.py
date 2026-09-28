@@ -11,14 +11,17 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from review_loop.services.state_dir import ensure_private_dir, readable_by_others
+
 EXCLUDED_TOP_LEVEL = {"worktrees", "shims", "locks", "state.db", "state.db-wal", "state.db-shm", "state.db-journal"}
 
 
 def backup_state(state_dir: Path, backups_dir: Path, conn: sqlite3.Connection | None = None) -> Path:
     state_dir, backups_dir = Path(state_dir), Path(backups_dir)
-    backups_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(backups_dir)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     archive = backups_dir / f"review-loop-{stamp}.tar.gz"
+    archive.touch(mode=0o600)
     with tempfile.TemporaryDirectory() as staging_name:
         staging = Path(staging_name)
         for entry in sorted(state_dir.iterdir()):
@@ -38,10 +41,20 @@ def restore_state(archive: Path, target: Path) -> Path:
     target = Path(target)
     if target.exists() and any(target.iterdir()):
         raise FileExistsError(f"refusing to restore over a non-empty directory: {target}; move it aside first")
-    target.mkdir(parents=True, exist_ok=True)
+    _private_destination(target)
     with tarfile.open(archive, "r:gz") as tar:
         tar.extractall(target, filter="data")
     return target
+
+
+def _private_destination(target: Path) -> None:
+    """The restored state must sit behind the boundary from the first byte: an empty destination the operator created with a
+    wider mode is tightened, and one whose filesystem ignores modes is refused before anything is extracted."""
+    ensure_private_dir(target)
+    target.chmod(0o700)
+    if readable_by_others(target):
+        raise PermissionError(f"refusing to restore into {target}: other accounts can read it and its mode cannot be tightened here; "
+                              "choose a destination on a filesystem that honours permissions")
 
 
 def _snapshot_database(source: Path, destination: Path, conn: sqlite3.Connection | None) -> None:

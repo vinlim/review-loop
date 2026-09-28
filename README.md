@@ -20,8 +20,9 @@ commits it made with their files. The report is built from the run's records, so
 counts are exact. The same text is saved as `runs/<run-id>/report.md`.
 
 `repo add` writes `~/.review-loop/config.toml`. Everything the tool produces lives under
-`~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, verification logs,
-`report.md`), `worktrees/`, `logs/`.
+`~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, prepare and
+verification logs, `report.md`), `worktrees/`, `logs/`. The directory is created private to your
+account, and `doctor` fails when other accounts can read it.
 
 A registered repository needs per-worktree config, because each tool worktree keeps its push lock in
 its own config file, out of the shared `.git/config` every checkout reads. Turn it on once with

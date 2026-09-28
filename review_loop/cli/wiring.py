@@ -20,7 +20,8 @@ def build_deps(box: Container, inspect_only: bool, platform: str = sys.platform,
     notifier = MacNotifier(box.process) if platform == "darwin" else StdoutNotifier()
     return Deps(
         settings=box.settings, conn=box.conn, git=box.git, github=box.github, process=box.process, clock=box.clock,
-        reviewer=CodexAdapter(box.process), author=ClaudeAdapter(box.process), prompts_dir=box.prompts_dir, schemas_dir=box.schemas_dir,
+        reviewer=CodexAdapter(box.process), author=ClaudeAdapter(box.process, oauth_token=box.claude_oauth_token),
+        prompts_dir=box.prompts_dir, schemas_dir=box.schemas_dir,
         base_env=dict(os.environ), runs_dir=box.settings.state_dir / "runs",
         find_author_session=lambda branch, local_path="": find_author_session(projects, branch, local_path), inspect_only=inspect_only, notifier=notifier,
     )
