@@ -43,11 +43,14 @@ class CodexAdapter:
     @staticmethod
     def argv(request: PhaseRequest, result_path: Path) -> list[str]:
         sandbox = "workspace-write" if request.tools_policy == "write" else "read-only"
+        # --ignore-user-config also drops the user's trusted-project list, which a worktree inherits from its main
+        # checkout. An untrusted checkout never loads its .codex/ config, hooks, rules or MCP servers.
         argv = ["codex", "exec", "-C", request.cwd, "--sandbox", sandbox, "--ignore-user-config",
                 "-m", request.model, "-c", f'model_reasoning_effort="{request.effort}"',
                 "--output-schema", request.schema_path, "-o", str(result_path), "--json"]
         if request.resume_session_id:
-            argv = ["codex", "exec", "resume", request.resume_session_id, *argv[2:]]
+            # -C and --sandbox are options of `codex exec` that `resume` rejects, so the subcommand follows them.
+            argv += ["resume", request.resume_session_id]
         return argv + ["-"]
 
 
