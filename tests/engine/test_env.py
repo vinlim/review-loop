@@ -1,3 +1,5 @@
+import subprocess
+
 from review_loop.engine.env import sanitize_env
 
 
@@ -20,6 +22,7 @@ def test_the_agent_environment_disables_pushes_through_git_config_variables_not_
     keys = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))}
     assert keys["remote.origin.pushurl"] == "DISABLED"
     assert keys["push.default"] == "nothing"
+    assert keys["credential.helper"] == ""
 
 
 def test_git_and_gh_credential_lookups_are_cut_off_for_agents():
@@ -27,3 +30,17 @@ def test_git_and_gh_credential_lookups_are_cut_off_for_agents():
 
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["GIT_CONFIG_GLOBAL"] == "/shims/empty-gitconfig" and env["GH_CONFIG_DIR"] == "/shims/empty-gh-config"
+
+
+def test_a_credential_helper_in_the_repository_config_answers_nobody_in_the_sanitized_environment(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "credential.helper", "!f() { echo username=alice; echo password=hunter2; }; f"], check=True)
+    ask = "protocol=https\nhost=example.com\n\n"
+    plain = subprocess.run(["git", "credential", "fill"], cwd=repo, input=ask, capture_output=True, text=True)
+    assert "password=hunter2" in plain.stdout, "the local helper answers in an ordinary shell"
+
+    env = sanitize_env({"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}, [], str(tmp_path / "shims"))
+    guarded = subprocess.run(["git", "credential", "fill"], cwd=repo, input=ask, capture_output=True, text=True, env=env)
+
+    assert "hunter2" not in guarded.stdout and "hunter2" not in guarded.stderr

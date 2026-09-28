@@ -7,7 +7,8 @@ import fnmatch
 
 ALWAYS_REMOVED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY",
                   "ANTHROPIC_API_KEY", "AWS_*", "*_SECRET*", "*PASSWORD*", "*_API_KEY")
-GIT_GUARDS = (("remote.origin.pushurl", "DISABLED"), ("push.default", "nothing"))
+# An empty credential.helper resets the helper list, so a helper in the shared .git/config cannot answer either.
+GIT_GUARDS = (("remote.origin.pushurl", "DISABLED"), ("push.default", "nothing"), ("credential.helper", ""))
 
 
 def sanitize_env(base_env: dict[str, str], patterns: list[str], shims_dir: str) -> dict[str, str]:

@@ -1,4 +1,4 @@
-"""Enrol a pull request: one active run per PR, only for registered repositories and allowed authors."""
+"""Enrol a pull request: one active run per PR, in one mode, only for registered repositories and allowed authors."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ class StartRefusal(StrEnum):
     AUTHOR_NOT_ALLOWED = "author_not_allowed"
     PULL_NOT_OPEN = "pull_not_open"
     FORK_NOT_SUPPORTED = "fork_not_supported"
+    MODE_CONFLICT = "mode_conflict"
 
 
 def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github: GitHubGateway, git: GitClient,
@@ -29,6 +30,9 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
         return Err(StartRefusal.REPOSITORY_NOT_REGISTERED)
     active = runs_repo.find_active_run(conn, repo.name, ref.number)
     if active is not None:
+        # A run's mode is fixed at enrolment; a start with the other flag must never drive it as is.
+        if active.mode() != requested_mode(inspect_only):
+            return Err(StartRefusal.MODE_CONFLICT)
         return Ok(active)
     pull = github.fetch_pull(ref)
     if pull.author not in repo.allowed_pr_authors:
@@ -40,17 +44,29 @@ def start_run(url: str, *, settings: Settings, conn: sqlite3.Connection, github:
     git.fetch(str(repo.local_path), "origin", [pull.base_ref, pull.head_ref])
     now = clock.now()
     run = Run(
-        id=f"{repo.name}-{ref.number}-{now.strftime('%Y%m%d-%H%M%S')}",
+        id=unique_run_id(conn, f"{repo.name}-{ref.number}-{now.strftime('%Y%m%d-%H%M%S')}"),
         repo=repo.name, pr_number=ref.number, pr_url=ref.url, pr_author=pull.author,
         head_ref=pull.head_ref, base_ref=pull.base_ref, head_sha=pull.head_sha, base_sha=pull.base_sha,
         merge_base_sha=git.merge_base(str(repo.local_path), pull.base_sha, pull.head_sha),
         state=RunState.PREPARING,
         budgets=Budgets(repo.review.max_review_passes, repo.review.max_fix_attempts, repo.review.max_alignment_exchanges),
         versions=dict(versions), author_session=author_session, created_at=now.isoformat(), updated_at=now.isoformat(),
-        extra={"mode": "inspect" if inspect_only else "publish", "remote_head": pull.head_sha},
+        extra={"mode": requested_mode(inspect_only), "remote_head": pull.head_sha},
     )
     runs_repo.create_run(conn, run)
     return Ok(run)
+
+
+def requested_mode(inspect_only: bool) -> str:
+    return "inspect" if inspect_only else "publish"
+
+
+def unique_run_id(conn: sqlite3.Connection, base: str) -> str:
+    """Ids stay readable (repository, PR, second); a stop and a start within one second get a numbered suffix."""
+    candidate, n = base, 2
+    while runs_repo.get_run(conn, candidate) is not None:
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate
 
 
 def find_repository(settings: Settings, ref: PullRef) -> RepositoryConfig | None:
