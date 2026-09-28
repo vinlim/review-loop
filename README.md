@@ -14,6 +14,11 @@ npm i -g @openai/codex            # uses the ChatGPT desktop login at ~/.codex/a
 .venv/bin/review-loop doctor
 ```
 
+At the end of a run the tool posts one report to the PR: an overview, how each finding ended, every
+exception with both positions, the findings closed without a verified fix and why, the run pass by pass, and the
+commits it made with their files. The report is built from the run's records, so its ids, commits and
+counts are exact. The same text is saved as `runs/<run-id>/report.md`.
+
 `repo add` writes `~/.review-loop/config.toml`. Everything the tool produces lives under
 `~/.review-loop/`: `state.db`, `runs/<run-id>/` (packets, prompts, agent outputs, verification logs,
 `report.md`), `worktrees/`, `logs/`.
