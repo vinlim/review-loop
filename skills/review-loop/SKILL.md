@@ -160,7 +160,8 @@ have told the user the id.
 | `prepare_failed` | a registered prepare command exited non-zero | its output is not kept; list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose; then `resume` |
 | `agent_failed` | no usable output after bounded retries | show the attempt directory; `resume` once; then report |
 | `workspace_dirty`, `unexpected_commit`, `workspace_foreign` | the worktree changed outside the coordinator | report the path; never clean it yourself |
-| `scripts_changed` | the PR or a fix touched a registered script | the user reads the diff and decides |
+| `scripts_changed` | the PR or a fix touched a registered script, or a file the configured agent CLI runs at startup (`opencode.json`, `.opencode/`, `.agents/` hooks, MCP config or plugins) | the user reads the diff and decides |
+| `read_only_violated` | an agent changed the worktree, or left it unreadable to git, during a read-only phase | report the path; the change is left for the user to inspect or discard; never clean it yourself |
 | `push_failed`, `github_error` | the remote did not confirm | `resume` once; if it repeats, report |
 | `inspect_only` | the dry run finished its read-only phases | read `pass-N/review.md` and the assessment output. Do not `resume`: a dry run pauses again at once, since it can never fix or push |
 | `manual` | someone ran `pause` | `resume` when the user says so |
