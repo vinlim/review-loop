@@ -10,6 +10,7 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
+from review_loop.services.preflight import Probing, probe_agents
 from review_loop.services.pytest_checks import is_pytest_check
 from review_loop.services.state_dir import readable_by_others
 from review_loop.types.agents import AGENT_PROFILES
@@ -25,14 +26,31 @@ class Check:
     detail: str
 
 
-def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path) -> list[Check]:
+def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path, probing: Probing | None = None) -> list[Check]:
+    """With `probing`, every distinct agent, model and effort the repositories configure answers one structured probe."""
     agents = settings.agents()
     checks = [_python(), *(_agent(process, name) for name in agents), *([_codex_login(process)] if "codex" in agents else []),
               _gh(process), _schemas(schemas_dir), _config(settings), _state_dir(settings)]
     checks.extend(_repository(repo) for repo in settings.repositories.values())
     checks.extend(_verification(process, repo) for repo in settings.repositories.values())
     checks.extend(_worktree_config(process, repo) for repo in settings.repositories.values())
+    if probing is not None:
+        checks.extend(_agent_probes(settings, probing))
     return checks
+
+
+def _agent_probes(settings: Settings, probing: Probing) -> list[Check]:
+    answers: dict = {}
+    checks: dict[str, Check] = {}
+    for repo in settings.repositories.values():
+        for probe in probe_agents(probing.agents, repo, state_dir=settings.state_dir, base_env=probing.base_env,
+                                  output_dir=probing.output_dir / repo.name, answers=answers):
+            name = f"agent {probe.agent} {probe.model} {probe.effort}"
+            if name in checks:
+                continue
+            detail = probe.detail if probe.ok else f"{probe.detail}; update the CLI or change the model under [repositories.{repo.name}.review]"
+            checks[name] = Check(name, probe.ok, detail)
+    return list(checks.values())
 
 
 def _python() -> Check:

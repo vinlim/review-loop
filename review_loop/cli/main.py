@@ -56,6 +56,7 @@ def _add_setup_commands(commands) -> None:
     add.add_argument("--remote", default="")
     add.add_argument("--author", default="")
     doctor = commands.add_parser("doctor", help="check CLIs, auth, schemas and config")
+    doctor.add_argument("--no-probe", action="store_true", help="skip the one-request probe of each configured agent")
     doctor.set_defaults(handler=command_doctor)
 
 
@@ -66,6 +67,7 @@ def _add_run_commands(commands) -> None:
     start.add_argument("--no-run", action="store_true", help="enrol only; do not run phases")
     start.add_argument("--inspect-only", action="store_true", help="review and assess into files; publish nothing")
     start.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
+    start.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent before the first phase")
     start.set_defaults(handler=command_start)
     drive = commands.add_parser("drive", help="drive an enrolled run in this process (what --detach starts)")
     drive.add_argument("run_id")
@@ -85,6 +87,7 @@ def _add_run_commands(commands) -> None:
         if name == "resume":
             sub.add_argument("--no-run", action="store_true")
             sub.add_argument("--detach", action="store_true", help="hand the run to a coordinator in its own session and return")
+            sub.add_argument("--no-preflight", action="store_true", help="skip the probe of each agent before continuing")
         sub.set_defaults(handler=handler)
     align = commands.add_parser("align", help="optional override: settle disputed findings yourself")
     align.add_argument("run_id")
@@ -133,7 +136,12 @@ def command_repo_add(args) -> int:
 
 
 def command_doctor(args, box: Container) -> int:
-    checks = run_doctor(box.process, box.settings, box.schemas_dir)
+    from review_loop.cli.wiring import build_deps
+    from review_loop.services.preflight import Probing
+
+    probing = None if args.no_probe else Probing(agents=build_deps(box, inspect_only=False).agents, base_env=dict(os.environ),
+                                                 output_dir=box.settings.state_dir / "doctor")
+    checks = run_doctor(box.process, box.settings, box.schemas_dir, probing=probing)
     for check in checks:
         print(f"{'ok  ' if check.ok else 'FAIL'} {check.name}: {check.detail}")
     return 0 if all(check.ok for check in checks) else 1
@@ -165,11 +173,29 @@ def command_start(args, box: Container) -> int:
         print(f"run {run.id} ({run.state.value}, {run.mode()}) for {run.pr_url}")
         if args.no_run:
             return 0
+        if not args.no_preflight and _preflight(box, run):
+            return 1
         if not args.detach:
             return _drive(box, run, lock=lock)
     finally:
         lock.release()
     return _detach(box, run)
+
+
+def _preflight(box: Container, run) -> bool:
+    """Probe the run's agents before any phase; a failure pauses the run with the answers and returns True."""
+    from review_loop.cli.wiring import build_deps
+    from review_loop.services.preflight import failures, probe_agents
+
+    deps = build_deps(box, inspect_only=run.mode() == "inspect")
+    probes = probe_agents(deps.agents, box.settings.repositories[run.repo], state_dir=box.settings.state_dir, base_env=deps.base_env,
+                          output_dir=box.settings.state_dir / "runs" / run.id / "preflight")
+    failed = failures(probes)
+    if not failed:
+        return False
+    run.extra["preflight_failure"] = failed
+    _report_final(box, run_control.pause(box.conn, run, PauseReason.AGENT_UNAVAILABLE, box.clock))
+    return True
 
 
 def _detach(box: Container, run) -> int:
@@ -263,6 +289,8 @@ def command_resume(args, box: Container) -> int:
     print(f"resumed {run.id} at {result.value.state.value}")
     if getattr(args, "no_run", False):
         return 0
+    if not getattr(args, "no_preflight", False) and _preflight(box, result.value):
+        return 1
     if getattr(args, "detach", False):
         return _detach(box, result.value)
     return _drive(box, result.value)

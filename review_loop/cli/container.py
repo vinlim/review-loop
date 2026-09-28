@@ -37,6 +37,7 @@ class Container:
     home: Path = Path.home() / ".review-loop"
     claude_oauth_token: str = ""  # the Claude adapter is its only holder; every other subprocess starts without it
     spawn: Any = spawn_detached  # starts a detached coordinator; tests record the call instead
+    agents: dict[str, Any] | None = None  # adapters to use instead of the real CLIs; tests give fakes
 
     @property
     def schemas_dir(self) -> Path:

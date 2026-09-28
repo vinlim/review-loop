@@ -26,6 +26,8 @@ def _desktop_session(projects: Path, agent: str, branch: str, local_path: str) -
 
 def _adapters(box: Container) -> dict[str, object]:
     """One adapter per agent the config accepts; the claimed Claude login goes to the Claude adapter alone."""
+    if box.agents is not None:
+        return dict(box.agents)
     adapters = {name: adapter(box.process) for name, adapter in AGENT_ADAPTERS.items()}
     adapters["claude"] = ClaudeAdapter(box.process, oauth_token=box.claude_oauth_token)
     return adapters

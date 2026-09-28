@@ -39,6 +39,7 @@ class PauseReason(StrEnum):
     GITHUB_ERROR = "github_error"
     READ_ONLY_VIOLATED = "read_only_violated"
     COORDINATOR_FAILED = "coordinator_failed"
+    AGENT_UNAVAILABLE = "agent_unavailable"
     MANUAL = "manual"
 
 

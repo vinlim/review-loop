@@ -34,6 +34,7 @@ def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | N
         f"worktree: {run.worktree_path or 'not prepared'}",
         *_prepare_failure_lines(run),
         *_coordinator_failure_lines(run),
+        *_preflight_failure_lines(run),
         "",
     ]
     if not findings:
@@ -62,6 +63,12 @@ def _coordinator_failure_lines(run: Run) -> list[str]:
         return []
     tail = run.extra["coordinator_failure"].rstrip().splitlines()[-PREPARE_TAIL_LINES:]
     return ["coordinator failure (resume retries the phase):", *("  " + line for line in tail)]
+
+
+def _preflight_failure_lines(run: Run) -> list[str]:
+    if run.pause_reason != PauseReason.AGENT_UNAVAILABLE or not run.extra.get("preflight_failure"):
+        return []
+    return [f"preflight: {run.extra['preflight_failure']}"]
 
 
 def _state(run: Run) -> str:

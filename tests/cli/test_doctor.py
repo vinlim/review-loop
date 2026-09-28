@@ -159,3 +159,33 @@ def test_doctor_names_the_fallback_check_beside_the_required_one(settings):
     check = {check.name: check for check in run_doctor(make(), with_fallback, SCHEMAS)}["repository webapp verification"]
 
     assert check.ok and ".claude/run-tests.sh changed" in check.detail and "fallback .claude/run-tests.sh full" in check.detail
+
+
+def probing(tmp_path, author_ok=True):
+    from review_loop.services.preflight import Probing
+    from tests.services.test_preflight import agents
+
+    return Probing(agents=agents(author_ok=author_ok), base_env={"PATH": "/usr/bin"}, output_dir=tmp_path / "doctor")
+
+
+def test_doctor_probes_each_configured_agent_with_the_model_and_effort_a_phase_would_use(settings, tmp_path):
+    ready = probing(tmp_path)
+
+    checks = {check.name: check for check in run_doctor(make(), settings, SCHEMAS, probing=ready)}
+
+    assert checks["agent codex gpt-5.6-sol xhigh"].ok and checks["agent claude claude-opus-5-5 xhigh"].ok
+    assert ready.agents["claude"].requests[0].effort == "xhigh"
+
+
+def test_doctor_fails_an_agent_that_cannot_serve_its_model_with_the_error_and_where_to_change_it(settings, tmp_path):
+    checks = {check.name: check for check in run_doctor(make(), settings, SCHEMAS, probing=probing(tmp_path, author_ok=False))}
+
+    check = checks["agent claude claude-opus-5-5 xhigh"]
+    assert not check.ok
+    assert "version 2.1.280 or newer" in check.detail and "[repositories.webapp.review]" in check.detail
+
+
+def test_doctor_without_probing_asks_no_agent_anything(settings):
+    checks = {check.name for check in run_doctor(make(), settings, SCHEMAS)}
+
+    assert not any(name.startswith("agent ") for name in checks)

@@ -19,8 +19,11 @@ class FakeSpawner:
 
 
 def detachable(settings):
+    from tests.services.test_preflight import agents
+
     box = container(settings)
     box.spawn = FakeSpawner()
+    box.agents = agents()
     return box
 
 
