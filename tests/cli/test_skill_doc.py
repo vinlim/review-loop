@@ -67,3 +67,35 @@ def test_prepare_failed_row_reads_the_prepare_log_first(skill):
     assert "not kept" not in action
     assert "`show <run-id>`" in action and "prepare-<n>.log" in action
     assert action.index("show") < action.index("workspace.prepare"), "rerunning the commands by hand is the fallback"
+
+
+def item(text: str, heading: str, number: int) -> str:
+    block = section(text, heading)
+    start = block.index(f"\n{number}. ")
+    end = block.find(f"\n{number + 1}. ", start + 1)
+    return block[start:end if end != -1 else None]
+
+
+def test_a_status_check_branches_on_the_state_and_keeps_a_waiter_on_a_working_run(skill):
+    status = item(skill, "## 2. Pick the action", 3)
+    branches: list[str] = []
+    for line in status.splitlines():
+        if line.strip().startswith("- "):
+            branches.append(line.strip())
+        elif branches and line.startswith("     "):
+            branches[-1] += " " + line.strip()  # a wrapped continuation belongs to its branch
+
+    assert [b.split(":")[0] for b in branches] == ["- If working", "- If complete", "- Otherwise (paused, failed, cancelled)"]
+    working, complete, otherwise = branches
+    assert "`wait <run-id>`" in working and "While it runs" in working and "Reporting" not in working
+    assert "`report.md`" in complete and "Reporting" in complete
+    assert status.count("Reporting") == 1, "the only route to Reporting is the complete branch"
+
+
+def test_every_resume_recipe_detaches_and_the_align_recipe_starts_a_waiter(skill):
+    import re
+
+    assert not re.findall(r"^review-loop resume <run-id>\s*$", skill, re.M), "a foreground resume leaves the session without a waiter"
+    align = section(skill, "## 9. Align")
+    assert "review-loop resume <run-id> --detach\nreview-loop wait <run-id>" in align
+    assert "run_in_background: true" in align

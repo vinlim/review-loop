@@ -47,7 +47,11 @@ applies to; it never chooses the action by itself.
 2. **An explicit pause, resume or stop**: resolve the run id (`status` when only a PR was named),
    then run that command. Before `resume`, read the pause table.
 3. **An explicit status question** ("how is the review going", "check the run", "is it done"):
-   `status`, then `show <run-id>`. If the run is complete, read `report.md`. Go to Reporting.
+   `status`, then `show <run-id>`, then exactly one of these, by the state shown:
+   - If working: make sure this session has `wait <run-id>` running in the background, starting
+     one if it has none, then go to While it runs.
+   - If complete: read `report.md` and go to Reporting.
+   - Otherwise (paused, failed, cancelled): report that state; for a pause, go to Paused runs.
 4. **A decision on a disputed finding**: go to Align.
 5. **Inbox words** ("inbox", "adjacent findings", "what did it park"): `inbox list`, then
    `inbox show <id>` for the ones the user asks about.
@@ -151,6 +155,11 @@ have told the user the id.
 
 ## 5. While it runs
 
+- A detached run survives this session, and nothing reports it: only a `wait <run-id>` running in
+  the background brings a notification back. Whenever a run is in a working state and this session
+  has no waiter on it (a run you resumed, a run another session started, a session that came back
+  later), start `wait <run-id>` with `run_in_background: true`. Never tell the user to ask for
+  status instead.
 - Check `status` when the user asks or when the `wait` notification arrives. Do not poll in a
   loop; a phase legitimately takes half an hour.
 - A `wait` that ends with `(no coordinator)` means the coordinator process is gone: `resume
@@ -168,7 +177,9 @@ have told the user the id.
 
 ## 6. Paused runs
 
-`show <run-id>` prints `paused (<reason>)`. Match the reason here and do exactly that.
+`show <run-id>` prints `paused (<reason>)`. Match the reason here and do exactly that. Every
+`resume` below is `resume <run-id> --detach`, followed by `wait <run-id>` in the background, the
+same two steps as a start; a resume without the waiter leaves you with no way to learn how it ends.
 
 | Reason | Cause | Action |
 |---|---|---|
@@ -192,8 +203,9 @@ state with `(no coordinator)` in `status` and `show`. `resume <run-id> --detach`
 that phase; no `pause` is needed. Every phase can be re-entered: an interrupted fix that left the
 worktree dirty pauses as `workspace_dirty` for the user to look at.
 
-**Success criteria**: after `resume`, the run prints a new transition line, or you have reported
-the exact reason and what the user must do.
+**Success criteria**: after `resume --detach`, a `wait` on the run is running in the background
+and the resume line named the state it continues from, or you have reported the exact reason and
+what the user must do.
 
 ## 7. Reporting
 
@@ -247,8 +259,12 @@ reasoning in their words, then:
 
 ```bash
 review-loop align <run-id> --file decision.md --finding R2-F1
-review-loop resume <run-id>
+review-loop resume <run-id> --detach
+review-loop wait <run-id>
 ```
+
+Run the `wait` with `run_in_background: true`, as after any resume; the notification brings you
+back when the run stops.
 
 Without `--finding` the decision applies to every disputed finding in the run, so pass the ids
 unless the user said "all of them".
@@ -266,6 +282,8 @@ unless the user said "all of them".
   for the notification.
 - "This session is ending, so the run is lost." A detached run keeps going. Note the run id; the
   next session runs `status` and `wait`.
+- "The run is detached, so I can stop tracking it." Detached means it survives, not that it
+  reports itself. Keep a `wait` on it, and start one after every `resume`.
 - "I will flip `post_reviews` to false so it stops posting." Mode is `--inspect-only` at start.
   Publication switches change only when the user asks.
 
