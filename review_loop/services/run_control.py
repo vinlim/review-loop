@@ -11,16 +11,18 @@ from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
 
 
 def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock) -> Run:
-    """A person's pause always applies. A coordinator's pause never undoes a stop or a manual pause that landed meanwhile:
-    the persisted run comes back instead, so the caller reports the state that stands."""
+    """A person's pause always applies and changes only the control columns: the coordinator may have persisted progress
+    since the caller read the run, and that progress is kept. A coordinator's pause writes its own copy, which is the
+    latest under its lock, but never undoes a stop or a manual pause that landed meanwhile: the persisted run comes back
+    instead, so the caller reports the state that stands."""
+    at = clock.now().isoformat()
+    if reason == PauseReason.MANUAL:
+        return runs_repo.pause_manually(conn, run.id, at)
     if run.state != RunState.PAUSED:
         run.resume_state = run.state
     run.state = RunState.PAUSED
     run.pause_reason = reason
-    run.updated_at = clock.now().isoformat()
-    if reason == PauseReason.MANUAL:
-        runs_repo.save_run(conn, run)
-        return run
+    run.updated_at = at
     if runs_repo.save_run_unless_controlled(conn, run):
         return run
     return runs_repo.get_run(conn, run.id)
@@ -48,9 +50,8 @@ def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = 
 
 
 def stop(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:
-    run.state = RunState.CANCELLED
-    run.resume_state = None
-    return _save(conn, run, clock)
+    """Cancels through the control columns alone, so the run's progress and history stay as the coordinator last wrote them."""
+    return runs_repo.cancel(conn, run.id, clock.now().isoformat())
 
 
 def _save(conn: sqlite3.Connection, run: Run, clock: Clock) -> Run:

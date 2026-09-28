@@ -79,7 +79,8 @@ during a read-only phase (`read_only_violated`; the change is left in place for 
 discard), or a crash of the coordinator itself. `resume` continues from the paused phase; after a
 moved head it goes back through preparation. `stop` and `pause` from another terminal take effect
 before the running loop's next phase, and they stand even when the coordinator records a pause of
-its own afterwards, from a failed probe or a crash included.
+its own afterwards, from a failed probe or a crash included. Both change only the run's control
+state, so progress the coordinator persisted in the meantime is kept.
 
 Agents run with no tokens, no credential helpers (`GIT_CONFIG_GLOBAL` empty, `GIT_CONFIG_NOSYSTEM`,
 `GH_CONFIG_DIR` empty), pushes disabled through `GIT_CONFIG_*` variables, and a `gh` shim on PATH.

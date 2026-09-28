@@ -40,6 +40,21 @@ def save_run_if_unchanged(conn: sqlite3.Connection, run: Run, seen_state: RunSta
                    (seen_state.value, seen_pause_reason.value if seen_pause_reason else "", seen_updated_at))
 
 
+def pause_manually(conn: sqlite3.Connection, run_id: str, at: str) -> Run | None:
+    """A person's pause touches only the control columns, so progress a coordinator persisted after the caller read the
+    run is kept; where the run resumes comes from the state on the row, not from the caller's copy."""
+    conn.execute("update runs set resume_state = case when state = ? then resume_state else state end, state = ?, pause_reason = ?, "
+                 "updated_at = ? where id = ?", (RunState.PAUSED.value, RunState.PAUSED.value, PauseReason.MANUAL.value, at, run_id))
+    return get_run(conn, run_id)
+
+
+def cancel(conn: sqlite3.Connection, run_id: str, at: str) -> Run | None:
+    """A stop touches only the control columns, for the same reason."""
+    conn.execute("update runs set state = ?, pause_reason = null, resume_state = null, updated_at = ? where id = ?",
+                 (RunState.CANCELLED.value, at, run_id))
+    return get_run(conn, run_id)
+
+
 def _update(conn: sqlite3.Connection, run: Run, condition: str, params: tuple) -> bool:
     columns = _COLUMNS.split(", ")
     assignments = ", ".join(f"{column} = ?" for column in columns[1:])

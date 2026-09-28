@@ -95,7 +95,8 @@ review-loop inbox list|show|dismiss|schedule|resolve
 ```
 
 `pause` keeps the run resumable. `stop` cancels further work and keeps changes, logs and records.
-Neither resets the branch or deletes the worktree.
+Neither resets the branch or deletes the worktree, and neither writes anything but the run's control
+columns, so a coordinator's progress persisted after the command read the run is never rewound.
 
 `--detach` hands the run to `drive` in its own session, with its output in `runs/<run-id>/coordinator.log`,
 so the run outlives the shell that started it; `wait` follows it and ends as a foreground drive would.

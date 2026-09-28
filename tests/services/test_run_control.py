@@ -142,3 +142,49 @@ def test_resume_of_an_unattended_run_is_refused_when_a_stop_landed_after_the_rea
     result = resume(conn, stale, FakeClock(), unattended=True)
 
     assert not result.ok and runs_repo.get_run(conn, run.id).state == RunState.CANCELLED
+
+
+# --- a person's pause or stop changes only the control columns, never the progress a coordinator persisted -------
+
+def coordinator_advanced(conn, run):
+    """What a coordinator in another process persists between a controller's read and its write."""
+    fresh = runs_repo.get_run(conn, run.id)
+    fresh.state, fresh.pass_no, fresh.head_sha = RunState.ASSESSING, 2, "n" * 40
+    fresh.extra = {"pending_review_pass": 2, "remote_head": "n" * 40}
+    runs_repo.save_run(conn, fresh)
+
+
+def test_a_manual_pause_keeps_the_progress_the_coordinator_persisted_after_the_controller_read_the_run():
+    conn, run = make()
+    stale = runs_repo.get_run(conn, run.id)
+    coordinator_advanced(conn, run)
+
+    returned = pause(conn, stale, PauseReason.MANUAL, FakeClock())
+
+    stored = runs_repo.get_run(conn, run.id)
+    assert (stored.state, stored.pause_reason, stored.resume_state) == (RunState.PAUSED, PauseReason.MANUAL, RunState.ASSESSING)
+    assert (stored.pass_no, stored.head_sha, stored.extra) == (2, "n" * 40, {"pending_review_pass": 2, "remote_head": "n" * 40})
+    assert returned.resume_state == RunState.ASSESSING and returned.pass_no == 2
+
+
+def test_a_stop_keeps_the_progress_and_history_the_coordinator_persisted_after_the_controller_read_the_run():
+    conn, run = make()
+    stale = runs_repo.get_run(conn, run.id)
+    coordinator_advanced(conn, run)
+
+    returned = stop(conn, stale, FakeClock())
+
+    stored = runs_repo.get_run(conn, run.id)
+    assert (stored.state, stored.pause_reason, stored.resume_state) == (RunState.CANCELLED, None, None)
+    assert (stored.pass_no, stored.head_sha, stored.extra["remote_head"]) == (2, "n" * 40, "n" * 40)
+    assert returned.state == RunState.CANCELLED and returned.pass_no == 2
+
+
+def test_a_manual_pause_on_an_already_paused_run_keeps_where_it_will_resume():
+    conn, run = make(RunState.VERIFYING)
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    pause(conn, runs_repo.get_run(conn, run.id), PauseReason.MANUAL, FakeClock())
+
+    stored = runs_repo.get_run(conn, run.id)
+    assert (stored.pause_reason, stored.resume_state) == (PauseReason.MANUAL, RunState.VERIFYING)
