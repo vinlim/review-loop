@@ -8,6 +8,7 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import runs as runs_repo
 from review_loop.repositories.db import connect, migrate
+from review_loop.services import run_control
 from review_loop.services.run_coordinator import Deps, run_loop, step
 from review_loop.services.start import start_run
 from review_loop.types.agents import AgentError, AgentFailure
@@ -71,6 +72,51 @@ def test_prepare_on_a_closed_pull_request_cancels_without_touching_git(settings,
 
     assert run.state == RunState.CANCELLED
     assert not any(call[0] == "worktree_add" for call in h.git.calls)
+
+
+def test_a_successful_prepare_leaves_its_log_under_the_run_directory(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], stdout="dependencies installed")
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.REVIEWING
+    log = tmp_path / "runs" / run.id / "prepare-1.log"
+    assert log.read_text() == "$ bash .claude/worktree-setup.sh\nexit 0\ndependencies installed\n"
+    assert run.extra["prepare_log"] == str(log) and "prepare_failure" not in run.extra
+
+
+def test_a_failed_prepare_pauses_with_the_log_written_and_its_tail_recorded_on_the_run(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stdout="composer install", stderr="composer: not found")
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.PREPARE_FAILED and run.resume_state == RunState.PREPARING
+    log = tmp_path / "runs" / run.id / "prepare-1.log"
+    assert log.read_text() == "$ bash .claude/worktree-setup.sh\nexit 1\ncomposer install\ncomposer: not found"
+    persisted = runs_repo.get_run(h.conn, run.id)
+    assert persisted.extra["prepare_log"] == str(log) and persisted.extra["prepare_failure"] == log.read_text()
+
+
+def test_a_second_prepare_on_the_same_run_numbers_its_log_instead_of_overwriting_the_first(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stderr="composer: not found")
+    run = step(h.deps, h.run)
+    h.process.scripts.clear()
+    h.process.script(["bash", ".claude/worktree-setup.sh"], stdout="dependencies installed")
+    resumed = run_control.resume(h.conn, run, h.clock).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING
+    run_dir = tmp_path / "runs" / run.id
+    assert "composer: not found" in (run_dir / "prepare-1.log").read_text()
+    assert "dependencies installed" in (run_dir / "prepare-2.log").read_text()
+    assert run.extra["prepare_log"] == str(run_dir / "prepare-2.log") and "prepare_failure" not in run.extra
 
 
 def test_the_first_review_stores_findings_with_ids_and_moves_to_assessing(settings, tmp_path):

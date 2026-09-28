@@ -88,3 +88,25 @@ def test_the_version_probe_asks_each_configured_agent_and_gh(settings):
     versions = tool_versions(process, {}, with_review(settings, reviewer="agy"))
 
     assert versions == {"review-loop": TOOL_VERSION, "agy": "agy 1.0", "claude": "claude 1.0", "gh": "gh 1.0"}
+
+
+def test_doctor_fails_a_state_directory_other_accounts_can_read_with_the_chmod_fix(settings):
+    import os
+
+    settings.state_dir.mkdir(parents=True)
+    os.chmod(settings.state_dir, 0o755)
+
+    check = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}["state directory"]
+
+    assert not check.ok and f"chmod 700 {settings.state_dir}" in check.detail
+
+
+def test_doctor_passes_a_private_state_directory(settings):
+    import os
+
+    settings.state_dir.mkdir(parents=True)
+    os.chmod(settings.state_dir, 0o700)
+
+    check = {check.name: check for check in run_doctor(make(), settings, SCHEMAS)}["state directory"]
+
+    assert check.ok

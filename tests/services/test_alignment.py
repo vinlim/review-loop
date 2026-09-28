@@ -195,3 +195,18 @@ def test_alignment_and_arbitration_leave_effort_to_an_agent_the_repository_leave
     efforts = {request.phase: request.effort for request in h.reviewer.requests if request.phase in ("align", "arbitrate")}
     assert efforts == {"align": "", "arbitrate": ""}
     assert {request.effort for request in h.author.requests if request.phase == "arbitrate"} == {"high"}
+
+
+def test_neither_arbiter_request_carries_the_author_cli_login(settings, tmp_path):
+    h, run = to_dispute(settings, tmp_path)
+    h.deps.base_env["CLAUDE_CODE_OAUTH_TOKEN"] = "author-token"
+    h.reviewer.reply(NOTE)
+    h.author.reply(disagree("R1-F1"))
+    h.reviewer.reply({"decision": "B", "rationale": "The token is never user input.", "residual": "none"})
+    h.author.reply({"decision": "A", "rationale": "The token is never user input.", "residual": "none"})
+
+    step(h.deps, run)
+
+    codex_request, claude_request = h.reviewer.requests[-1], h.author.requests[-1]
+    assert codex_request.phase == "arbitrate" and claude_request.phase == "arbitrate"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in codex_request.env and "CLAUDE_CODE_OAUTH_TOKEN" not in claude_request.env

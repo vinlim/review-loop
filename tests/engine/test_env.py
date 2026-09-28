@@ -3,15 +3,17 @@ import subprocess
 from review_loop.engine.env import sanitize_env
 
 
-def test_tokens_agent_sockets_and_api_keys_never_reach_an_agent_but_the_oauth_token_and_home_do():
-    base = {"PATH": "/usr/bin", "HOME": "/h", "GH_TOKEN": "x", "GITHUB_TOKEN": "x", "SSH_AUTH_SOCK": "/tmp/s", "OPENAI_API_KEY": "k",
-            "ANTHROPIC_API_KEY": "k", "AWS_SECRET_ACCESS_KEY": "k", "DB_PASSWORD": "p", "CLAUDE_CODE_OAUTH_TOKEN": "keep", "LANG": "C"}
+BASE = {"PATH": "/usr/bin", "HOME": "/h", "GH_TOKEN": "x", "GITHUB_TOKEN": "x", "SSH_AUTH_SOCK": "/tmp/s", "OPENAI_API_KEY": "k",
+        "ANTHROPIC_API_KEY": "k", "AWS_SECRET_ACCESS_KEY": "k", "DB_PASSWORD": "p", "CLAUDE_CODE_OAUTH_TOKEN": "keep", "LANG": "C"}
 
-    env = sanitize_env(base, [], "/shims")
 
-    for gone in ("GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD"):
+def test_tokens_agent_sockets_api_keys_and_the_author_cli_login_never_reach_a_process_but_home_does():
+    env = sanitize_env(BASE, [], "/shims")
+
+    for gone in ("GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD",
+                 "CLAUDE_CODE_OAUTH_TOKEN"):
         assert gone not in env
-    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "keep" and env["HOME"] == "/h" and env["LANG"] == "C"
+    assert env["HOME"] == "/h" and env["LANG"] == "C"
 
 
 def test_the_agent_environment_disables_pushes_through_git_config_variables_not_the_shared_config():

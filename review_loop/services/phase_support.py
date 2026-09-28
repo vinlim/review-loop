@@ -293,7 +293,7 @@ def apply_events(deps: Deps, run: Run, finding: Finding, events: tuple[str, ...]
     return False
 
 
-def agent_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
+def project_env(deps: Deps, repo_config: RepositoryConfig) -> dict[str, str]:
     return sanitize_env(deps.base_env, repo_config.workspace.sanitize_env, str(ensure_shims(deps.settings.state_dir)))
 
 

@@ -24,12 +24,19 @@ def _desktop_session(projects: Path, agent: str, branch: str, local_path: str) -
     return find_author_session(projects, branch, local_path) if agent == "claude" else ""
 
 
+def _adapters(box: Container) -> dict[str, object]:
+    """One adapter per agent the config accepts; the claimed Claude login goes to the Claude adapter alone."""
+    adapters = {name: adapter(box.process) for name, adapter in AGENT_ADAPTERS.items()}
+    adapters["claude"] = ClaudeAdapter(box.process, oauth_token=box.claude_oauth_token)
+    return adapters
+
+
 def build_deps(box: Container, inspect_only: bool, platform: str = sys.platform, claude_projects_dir: Path | None = None) -> Deps:
     projects = claude_projects_dir or Path.home() / ".claude" / "projects"
     notifier = MacNotifier(box.process) if platform == "darwin" else StdoutNotifier()
     return Deps(
         settings=box.settings, conn=box.conn, git=box.git, github=box.github, process=box.process, clock=box.clock,
-        agents={name: adapter(box.process) for name, adapter in AGENT_ADAPTERS.items()}, prompts_dir=box.prompts_dir, schemas_dir=box.schemas_dir,
+        agents=_adapters(box), prompts_dir=box.prompts_dir, schemas_dir=box.schemas_dir,
         base_env=dict(os.environ), runs_dir=box.settings.state_dir / "runs",
         find_author_session=lambda agent, branch, local_path="": _desktop_session(projects, agent, branch, local_path),
         inspect_only=inspect_only, notifier=notifier,

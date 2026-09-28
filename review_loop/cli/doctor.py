@@ -10,6 +10,7 @@ from pathlib import Path
 import jsonschema
 
 from review_loop.config.settings import Settings
+from review_loop.services.state_dir import readable_by_others
 from review_loop.types.agents import AGENT_PROFILES
 from review_loop.types.protocols import ProcessRunner
 
@@ -26,7 +27,7 @@ class Check:
 def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path) -> list[Check]:
     agents = settings.agents()
     checks = [_python(), *(_agent(process, name) for name in agents), *([_codex_login(process)] if "codex" in agents else []),
-              _gh(process), _schemas(schemas_dir), _config(settings)]
+              _gh(process), _schemas(schemas_dir), _config(settings), _state_dir(settings)]
     checks.extend(_repository(repo) for repo in settings.repositories.values())
     checks.extend(_worktree_config(process, repo) for repo in settings.repositories.values())
     return checks
@@ -74,6 +75,15 @@ def _schemas(schemas_dir: Path) -> Check:
 
 def _config(settings: Settings) -> Check:
     return Check("config", True, f"{settings.source}: repositories {', '.join(settings.repositories)}")
+
+
+def _state_dir(settings: Settings) -> Check:
+    if not settings.state_dir.exists():
+        return Check("state directory", False, f"{settings.state_dir} does not exist")
+    if readable_by_others(settings.state_dir):
+        return Check("state directory", False, f"other accounts can read {settings.state_dir}, which holds every captured log and the database; "
+                                               f"run `chmod 700 {settings.state_dir}`")
+    return Check("state directory", True, f"{settings.state_dir} is private to this account")
 
 
 def _repository(repo) -> Check:

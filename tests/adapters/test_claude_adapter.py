@@ -156,3 +156,22 @@ def test_attribution_is_switched_off_through_settings_and_the_shell_readers_are_
     allowed = argv[argv.index("--allowedTools") + 1: argv.index("--disallowedTools")]
     assert not any(tool.startswith(prefix) for tool in allowed for prefix in ("Bash(find", "Bash(sed", "Bash(rg", "Bash(cat", "Bash(head", "Bash(tail", "Bash(wc"))
     assert "Bash(git diff:*)" in allowed
+
+
+def test_the_adapter_adds_its_own_login_to_the_process_environment(tmp_path):
+    process = FakeProcessRunner()
+    process.script(["claude", "-p"], stdout=result_json())
+
+    ClaudeAdapter(process, oauth_token="author-token").run(request(tmp_path))
+
+    env = process.calls[0]["env"]
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "author-token" and env["PATH"] == "/usr/bin"
+
+
+def test_without_a_login_the_adapter_passes_the_request_environment_unchanged(tmp_path):
+    process = FakeProcessRunner()
+    process.script(["claude", "-p"], stdout=result_json())
+
+    ClaudeAdapter(process).run(request(tmp_path))
+
+    assert process.calls[0]["env"] == {"PATH": "/usr/bin"}

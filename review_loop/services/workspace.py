@@ -38,7 +38,8 @@ def local_branch(pr_number: int) -> str:
 
 
 def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, process: ProcessRunner, state_dir: Path,
-                      base_env: dict[str, str], changed_paths: list[str], timeout_seconds: int = 1800) -> Result[WorkspaceReady, WorkspaceProblem]:
+                      base_env: dict[str, str], changed_paths: list[str], timeout_seconds: int = 1800,
+                      log_path: Path | None = None) -> Result[WorkspaceReady, WorkspaceProblem]:
     path = workspace_path(repo, run.pr_number)
     branch = local_branch(run.pr_number)
     git.fetch(str(repo.local_path), "origin", [run.base_ref, run.head_ref])
@@ -52,11 +53,24 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
         git.worktree_add(str(repo.local_path), path, branch, run.head_sha)
     git.set_worktree_push_url(path, "origin", "DISABLED")
     env = sanitize_env(base_env, repo.workspace.sanitize_env, str(ensure_shims(state_dir)))
-    for command in prepare_commands(repo, changed_paths):
-        completed = process.run(command, cwd=path, env=env, timeout_seconds=timeout_seconds)
-        if completed.exit_code != 0:
-            return Err(WorkspaceProblem.PREPARE_FAILED)
+    prepared, log = _run_prepare(prepare_commands(repo, changed_paths), process, path, env, timeout_seconds)
+    if log_path is not None:
+        log_path.write_text(log)
+    if not prepared:
+        return Err(WorkspaceProblem.PREPARE_FAILED)
     return Ok(WorkspaceReady(path=path, local_branch=branch, env=env))
+
+
+def _run_prepare(commands: list[list[str]], process: ProcessRunner, cwd: str, env: dict[str, str], timeout_seconds: int) -> tuple[bool, str]:
+    """The first failure ends the sequence; the log keeps one block per command that ran, in the shape verification logs use,
+    so an operator can read a paused run without rerunning the setup by hand."""
+    blocks: list[str] = []
+    for command in commands:
+        completed = process.run(command, cwd=cwd, env=env, timeout_seconds=timeout_seconds)
+        blocks.append(f"$ {' '.join(completed.argv)}\nexit {completed.exit_code}{' (timed out)' if completed.timed_out else ''}\n{completed.stdout}\n{completed.stderr}")
+        if completed.exit_code != 0 or completed.timed_out:
+            return False, "\n".join(blocks)
+    return True, "\n".join(blocks)
 
 
 def prepare_commands(repo: RepositoryConfig, changed_paths: list[str]) -> list[list[str]]:
