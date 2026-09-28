@@ -184,3 +184,39 @@ def test_a_required_check_that_timed_out_stays_unavailable_and_the_fallback_neve
     result = verification_repo.list_results(h.conn, run.id)[0]
     assert result["status"] == "unavailable" and FULL not in result["commands"]
     assert not any(call["argv"] == FULL for call in h.process.calls)
+
+
+# --- the repair budget counts fixes, not verifications that ran nothing ------------------------------------
+
+def test_a_verification_that_ran_nothing_does_not_use_up_the_repair_a_later_failure_is_owed(settings, tmp_path):
+    from review_loop.services import run_control
+
+    settings = with_verification(settings, fallback=[])
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=3, stderr="nothing maps this change")
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    h.deps.settings = with_verification(h.deps.settings, fallback=[FULL])
+    h.process.script(FULL, exit_code=1, stdout="FAIL Tests\\Architecture\\ProviderEpochTimezonePinArchTest")
+    resumed = run_control.resume(h.conn, run, h.clock).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.FIXING, "one fix ran, so one repair is still owed"
+    assert "ProviderEpochTimezonePinArchTest" in run.extra["verify_failure_pass_1"]
+
+
+def test_the_repair_request_lets_the_author_fix_a_failure_the_pr_already_had(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout="FAIL Tests\\Architecture\\ProviderEpochTimezonePinArchTest app/Casts/Instant.php:84")
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+
+    step(h.deps, run)
+
+    packet = (tmp_path / "runs" / run.id / "pass-1" / "packet-fix.md").read_text()
+    assert "app/Casts/Instant.php:84" in packet
+    assert "code the PR already had" in packet and "inside your scope" in packet

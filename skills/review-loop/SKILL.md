@@ -175,7 +175,7 @@ have told the user the id.
 | `head_changed` | the remote branch moved | `resume` goes back through preparation; safe to run |
 | `usage_limit` | an agent CLI hit its quota | tell the user; `resume` after the window they name |
 | `auth_required` | an agent or `gh` login expired | the user renews it in the CLI's own flow; then `resume` |
-| `checks_failed` | required checks failed twice, or could not run | show the verification log path; the user decides |
+| `checks_failed` | required checks failed after the fix and its one repair, or could not run (nothing selected and no fallback registered, or a timeout) | show the verification log path and the failing test; the user decides. A failure in code the PR already had gets the same repair attempt as one the fix introduced |
 | `prepare_failed` | a registered prepare command exited non-zero | `show <run-id>` prints the prepare log's path, `<state_dir>/runs/<run-id>/prepare-<n>.log` (one per attempt), and its last lines; read the whole log when the tail does not show which command failed, and report the command and its error. If the log does not explain the failure, list the `workspace.prepare` commands (and any `prepare_when_paths_match` entry the PR's paths hit) from the repository's config table and ask the user to run them in the tool worktree to diagnose. `resume` once the cause is fixed |
 | `agent_failed` | no usable output after bounded retries | show the attempt directory; `resume` once; then report |
 | `agent_unavailable` | an agent CLI cannot serve its configured model; the run was probed before any phase | `show` prints the CLI's own error after `preflight:`. The user updates the CLI or changes the model in the config; then `resume`, which probes again |

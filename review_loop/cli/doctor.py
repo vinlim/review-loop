@@ -35,20 +35,21 @@ def run_doctor(process: ProcessRunner, settings: Settings, schemas_dir: Path, pr
     checks.extend(_verification(process, repo) for repo in settings.repositories.values())
     checks.extend(_worktree_config(process, repo) for repo in settings.repositories.values())
     if probing is not None:
-        checks.extend(_agent_probes(settings, probing))
+        checks.extend(_agent_probes(process, settings, probing))
     return checks
 
 
-def _agent_probes(settings: Settings, probing: Probing) -> list[Check]:
+def _agent_probes(process: ProcessRunner, settings: Settings, probing: Probing) -> list[Check]:
     answers: dict = {}
     checks: dict[str, Check] = {}
     for repo in settings.repositories.values():
         for probe in probe_agents(probing.agents, repo, state_dir=settings.state_dir, base_env=probing.base_env,
-                                  output_dir=probing.output_dir / repo.name, answers=answers):
+                                  output_dir=probing.output_dir / repo.name, process=process, answers=answers):
             name = f"agent {probe.agent} {probe.model} {probe.effort}"
             if name in checks:
                 continue
-            detail = probe.detail if probe.ok else f"{probe.detail}; update the CLI or change the model under [repositories.{repo.name}.review]"
+            detail = probe.detail if probe.ok else (f"{probe.detail}; a stale CLI needs an update, and the model is set under "
+                                                    f"[repositories.{repo.name}.review]")
             checks[name] = Check(name, probe.ok, detail)
     return list(checks.values())
 

@@ -542,7 +542,7 @@ silently alter evidence.
 | unexpected local edits | pause, preserve |
 | duplicate start for one PR | return the active run or refuse |
 | invalid or missing agent output | no dependent write; bounded retry, then pause; partial output kept for diagnosis |
-| required checks fail | preserve evidence; one repair attempt, then pause |
+| required checks fail | preserve evidence; one repair attempt (counted in fix runs, so a verification that ran nothing costs none), then pause; the repair may touch code the PR already had |
 | checks unavailable or nothing selected | report incomplete verification; never a pass; a registered fallback runs when every check passed or selected nothing, and its result stands in their place |
 | an agent cannot serve its configured model | probe each agent before the first phase and on every resume; pause with `agent_unavailable` and the CLI's own error |
 | coordinator crash | pause with `coordinator_failed`, traceback kept; resume retries the phase |

@@ -6,12 +6,17 @@ from review_loop.types.run import PauseReason, RunState
 from tests.cli.test_detach import FakeSpawner
 from tests.cli.test_main import URL, container
 from tests.fakes.agent import FakeAgent
-from tests.services.test_preflight import STALE_CLI, agents
+from tests.services.test_preflight import STALE_CLI, agents  # noqa: F401 - STALE_CLI is the shared error text
+
+
+def ready(box, **which_ok):
+    box.agents = agents(**which_ok)
+    box.process.script(["git", "init"])
 
 
 def test_a_start_whose_author_cannot_serve_its_model_pauses_before_any_phase_runs(settings, capsys):
     box = container(settings)
-    box.agents = agents(author_ok=False)
+    ready(box, author_ok=False)
 
     assert main(["start", URL], container=box) == 1
 
@@ -27,7 +32,7 @@ def test_a_start_whose_author_cannot_serve_its_model_pauses_before_any_phase_run
 
 def test_a_start_with_ready_agents_goes_on_to_hand_the_run_over(settings, capsys):
     box = container(settings)
-    box.agents = agents()
+    ready(box)
     box.spawn = FakeSpawner()
 
     assert main(["start", URL, "--detach"], container=box) == 0
@@ -40,7 +45,7 @@ def test_resume_probes_again_and_keeps_the_run_paused_while_an_agent_is_still_un
     main(["start", URL, "--no-run"], container=box)
     run_id = runs_repo.list_runs(box.conn)[0].id
     main(["pause", run_id], container=box)
-    box.agents = agents(reviewer_ok=False)
+    ready(box, reviewer_ok=False)
     box.spawn = FakeSpawner()
     capsys.readouterr()
 

@@ -24,6 +24,7 @@ def detachable(settings):
     box = container(settings)
     box.spawn = FakeSpawner()
     box.agents = agents()
+    box.process.script(["git", "init"])
     return box
 
 

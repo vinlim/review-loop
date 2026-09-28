@@ -55,7 +55,10 @@ def _fix_prompt(deps: Deps, run: Run, repo_config, directory, accepted) -> str:
     ))
     failure = run.extra.get(f"verify_failure_pass_{run.pass_no}", "")
     if failure:
-        packet += f"\n## Verification failure\n\nThe previous fix attempt failed the required checks. Repair it.\n\n```\n{failure}\n```\n"
+        packet += ("\n## Verification failure\n\nThe required checks failed on the tree that holds your changes. Repair whatever "
+                   "makes them fail, whether your change or code the PR already had: that repair is inside your scope even when no "
+                   "finding names the file. List each repaired file in the change entry of the finding it unblocks and say why.\n\n"
+                   f"```\n{failure}\n```\n")
     (directory / "packet-fix.md").write_text(packet)
     return fill_template(template(deps, "fix"), {
         **pull_values(pull, run), "accepted_findings": _accepted_lines(accepted), "contract": run.extra.get("contract", "(not stated)"),
@@ -98,7 +101,8 @@ def phase_verify(deps: Deps, run: Run) -> Run:
     if checks.status == "unavailable":
         return pause(deps, run, PauseReason.CHECKS_FAILED, resume_state=RunState.VERIFYING)
     if checks.status == "failed":
-        if attempt_no < run.budgets.max_fix_attempts:
+        # The budget is fix runs, so a verification that ran nothing never uses up the repair a later failure is owed.
+        if phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) < run.budgets.max_fix_attempts:
             run.extra[f"verify_failure_pass_{run.pass_no}"] = checks.log[-4000:]
             return save(deps, run, RunState.FIXING)
         return pause(deps, run, PauseReason.CHECKS_FAILED, resume_state=RunState.VERIFYING)

@@ -189,7 +189,7 @@ def _preflight(box: Container, run) -> bool:
 
     deps = build_deps(box, inspect_only=run.mode() == "inspect")
     probes = probe_agents(deps.agents, box.settings.repositories[run.repo], state_dir=box.settings.state_dir, base_env=deps.base_env,
-                          output_dir=box.settings.state_dir / "runs" / run.id / "preflight")
+                          output_dir=box.settings.state_dir / "runs" / run.id / "preflight", process=box.process)
     failed = failures(probes)
     if not failed:
         return False
