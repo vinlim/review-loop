@@ -376,7 +376,7 @@ def test_e2e_the_final_report_tells_the_run_pass_by_pass_with_the_commit_read_ba
     sha = run.head_sha[:9]
     report = (tmp_path / "runs" / run.id / "report.md").read_text()
     assert f"- `{sha}` fix: redact URLs once and bound the report (pass 1): {LOGGER}, {NUMBERS}" in report
-    assert f"Commit `{sha}` fixed R1-F1 and R1-F2. Checks passed." in report
+    assert f"Commit `{sha}` addressed R1-F1 and R1-F2. Checks passed." in report
     assert "The loop pushed 1 commit touching 2 files." in report
     final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
     assert "## Pass by pass" in final and "## Commits" in final
@@ -407,6 +407,7 @@ def test_a_final_report_longer_than_a_github_comment_is_posted_cut_and_kept_whol
 
     final = [write for write in h.github.writes if write[0] == "post_comment"][-1][2]
     report_path = tmp_path / "runs" / run.id / "report.md"
-    assert "The report was cut to fit a GitHub comment" in final and str(report_path) in final
+    assert "The report was cut to fit a GitHub comment" in final and f"`runs/{run.id}/report.md`" in final
+    assert str(tmp_path) not in final
     assert len(final.split("<!-- review-loop")[0]) <= 600
     assert "## Next step" in report_path.read_text()

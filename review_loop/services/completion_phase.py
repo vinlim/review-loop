@@ -12,7 +12,8 @@ from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import Deps, inspect_only, now, publisher as make_publisher, ref, remote_head, save
 from review_loop.types.run import Outcome, Run, RunState
 
-# GitHub rejects a comment over 65,536 characters; the difference leaves room for the marker.
+# GitHub rejects a comment over 65,536 characters; the difference leaves room for the marker. A cut report names
+# its full copy relative to the state directory, so the runner's home path never reaches the PR.
 COMMENT_LIMIT = 60_000
 
 
@@ -50,8 +51,9 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
         try:
             publisher.reconcile(run.id, pull_ref)
             if not outbox_repo.has_done(deps.conn, run.id, marker):
+                shown_path = report_path.relative_to(deps.runs_dir.parent).as_posix()
                 publisher.post(run.id, "final", {"outcome": outcome.value}, marker,
-                               fit_for_comment(report, COMMENT_LIMIT, str(report_path)) + "\n" + marker,
+                               fit_for_comment(report, COMMENT_LIMIT, shown_path) + "\n" + marker,
                                lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
         except Exception as error:
             from review_loop.services.phase_support import pause

@@ -113,9 +113,9 @@ def test_each_pass_says_what_the_reviewer_and_author_did_and_what_was_committed_
     passes = three_pass_run().split("## Pass by pass")[1].split("\n## ")[0].strip().splitlines()
 
     assert passes[0] == ("- **Pass 1** at `aaaaaaaaa`: request changes. Raised R1-F1, R1-F2 and R1-F3. "
-                         "Author: accepted R1-F1 and R1-F2, rejected R1-F3. Commit `111111111` fixed R1-F1 and R1-F2. Checks passed.")
+                         "Author: accepted R1-F1 and R1-F2, rejected R1-F3. Commit `111111111` addressed R1-F1 and R1-F2. Checks passed.")
     assert passes[1] == ("- **Pass 2** at `111111111`: request changes. Reviewer: verified R1-F1 and R1-F2, accepted the rejection of R1-F3. "
-                         "Raised R2-F1. Author: accepted R2-F1. Commit `222222222` fixed R2-F1. Checks passed.")
+                         "Raised R2-F1. Author: accepted R2-F1. Commit `222222222` addressed R2-F1. Checks passed.")
     assert passes[2] == "- **Pass 3** at `222222222`: approve. Reviewer: verified R2-F1. Raised nothing new."
 
 
@@ -168,7 +168,7 @@ def test_a_report_too_long_for_a_github_comment_is_cut_at_a_line_with_a_pointer_
     body = fit_for_comment(report, limit=2000, full_path="/state/runs/r/report.md")
 
     assert len(body) <= 2000 and body.startswith("# Review complete\n")
-    assert body.rstrip().endswith("The full report is at `/state/runs/r/report.md` on the host that ran the loop.")
+    assert body.rstrip().endswith("The full report is at `/state/runs/r/report.md` in the review-loop state directory on the host that ran the loop.")
     assert fit_for_comment("short", limit=2000, full_path="x") == "short"
 
 
@@ -201,9 +201,9 @@ def test_a_finding_withdrawn_after_its_fix_names_the_fix_commit_so_the_report_ne
 
     text = render_report(a_run(pass_no=2), [finding], events, [], [], [], exhausted=False)
 
-    assert "| R1-F1 | ISSUE | pass 1 | fixed in 111111111, withdrawn in pass 2 | A title |" in text
+    assert "| R1-F1 | ISSUE | pass 1 | fix attempted in 111111111, withdrawn in pass 2 | A title |" in text
     section = text.split("## Closed without a verified fix")[1].split("\n## ")[0]
-    assert 'Commit `111111111` fixed it in pass 1. The reviewer withdrew it in pass 2: "The guard already ran first."' in section
+    assert 'Commit `111111111` attempted a fix in pass 1. The reviewer withdrew it in pass 2: "The guard already ran first."' in section
     assert "## Closed without a fix" not in text
 
 
@@ -217,3 +217,55 @@ def test_commits_git_could_not_describe_leave_the_file_count_out_or_qualify_it()
     assert "The loop pushed 1 commit. " in alone and "touching" not in alone
     assert "- `111111111` (title unavailable) (pass 1)\n" in alone
     assert "The loop pushed 2 commits touching at least 2 files." in mixed
+
+
+STANDING = {"note": "re-raised after decision v1 without new evidence; the decision stands (keep)", "re_raised": True, "pass": 2}
+
+
+def re_raised_after_a_keep_decision():
+    earlier, repeat = a_finding("R1-F1", "rejection_accepted"), a_finding("R2-F1", "rejection_accepted")
+    repeat.supersedes = "R1-F1"
+    events = {"R1-F1": [event("coordinator", "needs_alignment", "rejection_accepted", note="keep: both arbiters kept it", **{"pass": 1})],
+              "R2-F1": [event("reviewer", "", "open", **{"pass": 2}),
+                        event("coordinator", "open", "rejected_pending_review", **STANDING),
+                        event("coordinator", "rejected_pending_review", "rejection_accepted", **STANDING)]}
+    return [earlier, repeat], events
+
+
+def test_a_finding_closed_by_a_standing_decision_is_credited_to_the_decision_it_repeats():
+    findings, events = re_raised_after_a_keep_decision()
+    decisions = [{"version": 1, "source": "arbitration", "finding_ids": ["R1-F1"], "decision": "keep: both arbiters kept it", "note": ""}]
+
+    text = render_report(a_run(pass_no=2), findings, events, decisions, [], [], exhausted=False)
+
+    assert "| R2-F1 | ISSUE | pass 2 | kept by decision v1 | A title |" in text
+    line = next(line for line in text.splitlines() if line.startswith("- **R2-F1**"))
+    assert "It repeats R1-F1 without new evidence, so decision v1 (arbitration) stands: keep: both arbiters kept it." in line
+    assert "reviewer" not in line
+    assert text.count("- R2-F1: re-raised after decision v1") == 1
+
+
+def test_a_coordinator_closure_whose_decision_is_missing_is_never_credited_to_the_reviewer():
+    findings, events = re_raised_after_a_keep_decision()
+
+    text = render_report(a_run(pass_no=2), findings, events, [], [], [], exhausted=False)
+
+    assert "| R2-F1 | ISSUE | pass 2 | kept by a standing decision in pass 2 | A title |" in text
+    line = next(line for line in text.splitlines() if line.startswith("- **R2-F1**"))
+    assert 'The coordinator kept it in pass 2: "re-raised after decision v1 without new evidence; the decision stands (keep)."' in line
+    assert "reviewer" not in line
+
+
+def test_a_fix_the_reviewer_disputed_is_reported_as_an_attempt():
+    finding = a_finding("R1-F1", "rejection_accepted")
+    events = {"R1-F1": fixed_then_verified(1, 1, C1, 2)[:3] + [
+        event("reviewer", "fixed_pending_verification", "open", resolution="disputed", note="The fix still leaks with two @.", **{"pass": 2}),
+        event("author", "open", "rejected_pending_review", disposition="reject", reply="Two @ in a password is out of scope.", **{"pass": 2}),
+        event("reviewer", "rejected_pending_review", "rejection_accepted", resolution="rejection_accepted", note="Agreed, out of scope.", **{"pass": 3})]}
+
+    text = render_report(a_run(pass_no=3), [finding], events, [], [], [], exhausted=False)
+
+    assert "| R1-F1 | ISSUE | pass 1 | fix attempted in 111111111, rejection accepted in pass 3 | A title |" in text
+    line = next(line for line in text.splitlines() if line.startswith("- **R1-F1**"))
+    assert "Commit `111111111` attempted a fix in pass 1, which the reviewer disputed in pass 2." in line
+    assert "fixed" not in "\n".join(l for l in text.splitlines() if "R1-F1" in l)

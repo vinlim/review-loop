@@ -58,9 +58,10 @@ def render_report(run: Run, findings: list[Finding], events: dict[str, list[dict
         lines += ["", "## Pass by pass", ""] + [_pass_line(run, n, findings, events, verification) for n in range(1, run.pass_no + 1)]
     if commits:
         lines += ["", "## Commits", ""] + [_commit_line(commit) for commit in commits]
-    re_raised = [(fid, e) for fid, items in events.items() for e in items if e["note"].get("re_raised")]
+    # A standing decision can take more than one event to apply; each finding's note is listed once.
+    re_raised = _unique((fid, e["note"]["note"]) for fid, items in events.items() for e in items if e["note"].get("re_raised"))
     if re_raised:
-        lines += ["", "## Re-raised after a decision", ""] + [f"- {fid}: {e['note']['note']}" for fid, e in re_raised]
+        lines += ["", "## Re-raised after a decision", ""] + [f"- {fid}: {note}" for fid, note in re_raised]
     if decisions:
         lines += ["", "## Alignment decisions", ""] + [f"- v{d['version']} ({_source(d)}): {d['decision']}" for d in decisions]
     lines += ["", "## Verification", ""]
@@ -75,7 +76,8 @@ def fit_for_comment(text: str, limit: int, full_path: str) -> str:
     """GitHub rejects a comment over 65,536 characters; a long report is cut at a line and points to the file on disk."""
     if len(text) <= limit:
         return text
-    notice = f"\nThe report was cut to fit a GitHub comment. The full report is at `{full_path}` on the host that ran the loop.\n"
+    notice = (f"\nThe report was cut to fit a GitHub comment. The full report is at `{full_path}` in the review-loop state "
+              "directory on the host that ran the loop.\n")
     cut = text[: limit - len(notice)]
     return cut[: cut.rfind("\n") + 1] + notice
 
@@ -119,17 +121,17 @@ def _outcome(finding: Finding, events: list[dict], decisions: list[dict]) -> str
     state = FindingState(finding.state)
     closing = _closing_event(events, state)
     in_pass = f" in pass {closing['note']['pass']}" if closing and closing["note"].get("pass") else ""
-    decision = _decision_for(finding.id, decisions)
+    decision = _decision_for(finding, decisions)
     commit, _ = _fix(events)
-    fixed = f"fixed in {commit[:9]}, " if commit else ""
     if state == FindingState.VERIFIED:
-        return f"{fixed}verified{in_pass}"
+        return (f"fixed in {commit[:9]}, " if commit else "") + f"verified{in_pass}"
+    attempted = f"fix attempted in {commit[:9]}, " if commit else ""
     if state == FindingState.REJECTION_ACCEPTED:
-        if closing and closing["actor"] == "coordinator" and decision:
-            return f"{fixed}kept by decision v{decision['version']}"
-        return f"{fixed}rejection accepted{in_pass}"
+        if closing and closing["actor"] == "coordinator":
+            return f"{attempted}kept by decision v{decision['version']}" if decision else f"{attempted}kept by a standing decision{in_pass}"
+        return f"{attempted}rejection accepted{in_pass}"
     if state in (FindingState.WITHDRAWN, FindingState.ANSWERED):
-        return f"{fixed}{state.value}{in_pass}"
+        return f"{attempted}{state.value}{in_pass}"
     if state == FindingState.DEFERRED_BY_DECISION:
         return f"exception by decision v{decision['version']}" if decision else "left as an exception"
     return UNFINISHED.get(state, state.value.replace("_", " "))
@@ -143,15 +145,17 @@ def _closing(finding: Finding, events: list[dict], decisions: list[dict]) -> str
     parts = [f"- **{finding.id}** [{finding.severity}] {_sentence(finding.title)}"]
     commit, fix_pass = _fix(events)
     if commit:
-        parts.append(f"Commit `{commit[:9]}` fixed it in pass {fix_pass}.")
+        disputed = _disputed_after_fix(events)
+        parts.append(f"Commit `{commit[:9]}` attempted a fix in pass {fix_pass}"
+                     + (f", which the reviewer disputed in pass {disputed}." if disputed else "."))
     if state == FindingState.REJECTION_ACCEPTED:
         reply = next((e["note"]["reply"] for e in reversed(events)
                       if e["actor"] == "author" and e["note"].get("disposition") in ("reject", "unfixed") and e["note"].get("reply")), "")
         if reply:
             parts.append(f"The author declined: {_quoted(reply)}")
-        decision = _decision_for(finding.id, decisions)
-        if closing and closing["actor"] == "coordinator" and decision:
-            parts.append(f"Kept as is by decision v{decision['version']} ({_source(decision)}): {_sentence(decision['decision'])}")
+        decision = _decision_for(finding, decisions)
+        if closing and closing["actor"] == "coordinator":
+            parts.append(_kept_by_coordinator(finding, note, decision, in_pass))
         elif note.get("resolution") == "by omission":
             parts.append(f"The reviewer accepted this{in_pass} by not raising it again.")
         elif note.get("note"):
@@ -184,7 +188,7 @@ def _pass_line(run: Run, n: int, findings: list[Finding], events: dict[str, list
     fixes = [(fid, e["note"]) for fid, e in in_pass if e["note"].get("commit")]
     if fixes:
         commit = fixes[0][1]
-        parts.append(f"Commit `{commit['commit'][:9]}` fixed {_join(_unique(fid for fid, _ in fixes))}."
+        parts.append(f"Commit `{commit['commit'][:9]}` addressed {_join(_unique(fid for fid, _ in fixes))}."
                      + ("" if commit.get("pushed", True) else " It was not pushed."))
     checks = [_check_words(v["status"]) for v in verification if v["pass_no"] == n]
     if checks:
@@ -212,7 +216,7 @@ def _render_positions(finding: Finding, events: list[dict], decisions: list[dict
         lines.append(f"Author position: {author[-1]['note']['reply']}")
     for index, event in enumerate(arbiters, start=1):
         lines.append(f"Arbitration (arbiter {index}): {event['note'].get('decision', '')}. {event['note'].get('rationale', '')}")
-    related = [d for d in decisions if finding.id in d["finding_ids"]]
+    related = [d for d in decisions if {finding.id, finding.supersedes} & set(d["finding_ids"])]
     for decision in related:
         lines.append(f"Decision v{decision['version']} ({_source(decision)}): {decision['decision']}")
     lines.append("")
@@ -229,8 +233,33 @@ def _fix(events: list[dict]) -> tuple[str, int | None]:
     return note.get("commit", ""), note.get("pass")
 
 
-def _decision_for(finding_id: str, decisions: list[dict]) -> dict | None:
-    return next((d for d in reversed(decisions) if finding_id in d["finding_ids"]), None)
+def _disputed_after_fix(events: list[dict]) -> int | None:
+    """The pass in which the reviewer rejected the last fix, if it did."""
+    last_fix = max((index for index, e in enumerate(events) if e["note"].get("commit")), default=None)
+    if last_fix is None:
+        return None
+    return next((e["note"].get("pass") for e in events[last_fix + 1:]
+                 if e.get("from_state") == FindingState.FIXED_PENDING_VERIFICATION and e["to_state"] == FindingState.OPEN), None)
+
+
+def _kept_by_coordinator(finding: Finding, note: dict, decision: dict | None, in_pass: str) -> str:
+    """A finding the coordinator closed under a decision, never credited to the reviewer."""
+    if decision is None:
+        return f"The coordinator kept it{in_pass}: {_quoted(note['note'])}" if note.get("note") else f"The coordinator kept it{in_pass}."
+    ruling = f"decision v{decision['version']} ({_source(decision)})"
+    if note.get("re_raised") and finding.supersedes:
+        return f"It repeats {finding.supersedes} without new evidence, so {ruling} stands: {_sentence(decision['decision'])}"
+    return f"Kept as is by {ruling}: {_sentence(decision['decision'])}"
+
+
+def _decision_for(finding: Finding, decisions: list[dict]) -> dict | None:
+    """Its own decision, else the one on the finding it supersedes: the coordinator applies a standing decision
+    only through that one link, so the report looks no further."""
+    for finding_id in (finding.id, finding.supersedes):
+        decision = next((d for d in reversed(decisions) if finding_id and finding_id in d["finding_ids"]), None)
+        if decision is not None:
+            return decision
+    return None
 
 
 def _grouped(pairs: list[tuple[str, str]], acts: tuple[tuple[str, str], ...]) -> str:
@@ -244,8 +273,8 @@ def _join(ids: list[str]) -> str:
     return ids[0] if len(ids) == 1 else f"{', '.join(ids[:-1])} and {ids[-1]}"
 
 
-def _unique(ids) -> list[str]:
-    return list(dict.fromkeys(ids))
+def _unique(items) -> list:
+    return list(dict.fromkeys(items))
 
 
 def _count(number: int, one: str, many: str) -> str:
