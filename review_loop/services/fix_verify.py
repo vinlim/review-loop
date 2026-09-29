@@ -15,8 +15,8 @@ from review_loop.repositories import phases as phases_repo
 from review_loop.repositories import runs as runs_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
-    Deps, apply_events, author_resume, decisions, events_by_finding, head_moved, instruction_files, keep_author_session, now, pass_dir,
-    pause, project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
+    Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
+    project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.pytest_checks import pytest_check_env
 from review_loop.services.workspace import registered_script_files
@@ -121,9 +121,12 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
         return _publish_without_changes(deps, run)
     sha = candidate.value
     run.extra[f"candidate_commit_pass_{run.pass_no}"] = sha
-    if pull.head_sha == sha:
+    # Git says where the branch points. The candidate already there is this run's own push, recorded or not: a pause or
+    # a crash can follow a successful push before the record is written, and the API can still be answering from before it.
+    remote_sha = deps.git.remote_branch_head(run.worktree_path, repo_config.remote, run.head_ref)
+    if pull.head_sha == sha or remote_sha == sha:
         return _record_pushed(deps, run, sha)
-    if head_moved(deps, run):
+    if remote_sha != remote_head(run):
         return pause(deps, run, PauseReason.HEAD_CHANGED, resume_state=RunState.VERIFYING)
     if not repo_config.publication.push_verified_fixes:
         run.extra["unpushed_commits"] = run.extra.get("unpushed_commits", []) + [sha]
@@ -141,11 +144,14 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
 
 
 def _record_pushed(deps: Deps, run: Run, sha: str, pushed: bool = True) -> Run:
+    """What happened on the branch is progress, written whatever a person did meanwhile; only the transition is theirs to refuse."""
     run.head_sha = sha
     run.extra["verified_head"] = sha
     if pushed:
         run.extra["remote_head"] = sha
     run.extra[f"fix_commit_pass_{run.pass_no}"] = sha
+    run.updated_at = now(deps)
+    runs_repo.save_run_keeping_control(deps.conn, run)
     at = now(deps)
     for finding in findings_repo.list_findings(deps.conn, run.id):
         if finding.state == FindingState.ACCEPTED:

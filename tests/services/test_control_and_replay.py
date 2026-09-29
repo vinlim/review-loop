@@ -455,3 +455,59 @@ def test_a_stop_that_lands_after_the_commit_and_before_the_push_withholds_the_pu
     final = step(h.deps, run)
 
     assert final.state == RunState.CANCELLED and h.git.pushes == [] and len(h.git.commits) == 1
+
+
+# --- the run's own push is recognised from git on resume, whatever kept it from being recorded ---------------------
+
+def test_a_pause_that_lands_during_the_push_keeps_the_push_recorded_and_the_resume_carries_on_despite_a_stale_api(settings, tmp_path, monkeypatch):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None  # the API keeps answering with the head from before the push
+    original_push = h.git.push_guarded
+
+    def push_then_pause(*args, **kwargs):
+        result = original_push(*args, **kwargs)
+        run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+        return result
+
+    monkeypatch.setattr(h.git, "push_guarded", push_then_pause)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL) and len(h.git.pushes) == 1
+    pushed = h.git.pushes[0][2]
+    assert paused.extra["remote_head"] == pushed and paused.head_sha == pushed, "the push that happened is on the record, pause or not"
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == pushed
+
+
+def test_a_crash_after_the_push_and_before_the_record_is_recognised_from_git_on_resume_despite_a_stale_api(settings, tmp_path, monkeypatch):
+    import pytest
+
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None
+    original_push = h.git.push_guarded
+
+    def push_then_die(*args, **kwargs):
+        original_push(*args, **kwargs)
+        raise RuntimeError("the coordinator lost power right after the remote accepted the push")
+
+    monkeypatch.setattr(h.git, "push_guarded", push_then_die)
+    with pytest.raises(RuntimeError):
+        step(h.deps, run)
+    monkeypatch.undo()
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.VERIFYING and stranded.extra.get("remote_head") != h.git.pushes[0][2]
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]

@@ -78,7 +78,8 @@ confirm, a GitHub error, an agent that returns nothing usable, an agent that cha
 during a read-only phase (`read_only_violated`; the change is left in place for you to inspect or
 discard), or a crash of the coordinator itself. `resume` continues from the paused phase; after a
 moved head it goes back through preparation, unless git shows the branch still where the run left it,
-in which case the pause was the API lagging a push and the run continues where it paused. `stop` and
+in which case the pause was the API lagging a push and the run continues where it paused. A push the
+run made is recognised from git on resume even when a pause or a crash kept it from being recorded. `stop` and
 `pause` from another terminal take effect before the running loop's next phase: the phase already
 running finishes first, `status` says `(coordinator still finishing its phase)` until it does, and a
 review that finishes under a pause is kept as a checkpoint and published on resume instead of being
