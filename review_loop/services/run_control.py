@@ -29,17 +29,20 @@ def pause(conn: sqlite3.Connection, run: Run, reason: PauseReason, clock: Clock)
     return runs_repo.get_run(conn, run.id)
 
 
-def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = False) -> Result[Run, str]:
-    """A moved head cannot be resumed where it stopped: the run goes back through preparation to adopt it. A run in a
-    working state that no coordinator drives (`unattended`) continues from that state; every phase can be re-entered.
-    The write lands only while the run still reads as the caller saw it, so a stop that came between is kept."""
+def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = False, head_unchanged: bool = False) -> Result[Run, str]:
+    """A moved head cannot be resumed where it stopped: the run goes back through preparation to adopt it, unless the
+    caller has established that the branch still points where the run left it (`head_unchanged`), in which case the
+    pause was a false alarm and the run continues where it paused. A run in a working state that no coordinator
+    drives (`unattended`) continues from that state; every phase can be re-entered. The write lands only while the
+    run still reads as the caller saw it, so a stop that came between is kept."""
     seen = (run.state, run.pause_reason, run.updated_at)
     if unattended and run.state in WORKING_STATES:
         pass
     elif run.state != RunState.PAUSED or run.resume_state is None:
         return Err(f"run {run.id} is {run.state.value}, not paused")
     else:
-        run.state = RunState.PREPARING if run.pause_reason == PauseReason.HEAD_CHANGED else run.resume_state
+        moved = run.pause_reason == PauseReason.HEAD_CHANGED and not head_unchanged
+        run.state = RunState.PREPARING if moved else run.resume_state
         run.resume_state = None
         run.pause_reason = None
     run.updated_at = clock.now().isoformat()

@@ -9,7 +9,7 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.repositories import verification as verification_repo
-from review_loop.services.phase_support import Deps, inspect_only, now, publisher as make_publisher, ref, remote_head, save
+from review_loop.services.phase_support import Deps, head_moved, inspect_only, now, publisher as make_publisher, ref, save
 from review_loop.types.run import Outcome, Run, RunState
 
 # GitHub rejects a comment over 65,536 characters; the difference leaves room for the marker. A cut report names
@@ -45,7 +45,7 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
         pull = deps.github.fetch_pull(pull_ref)
         if pull.state != "open":
             return save(deps, run, RunState.CANCELLED)
-        if pull.head_sha != remote_head(run):
+        if head_moved(deps, run):
             return save(deps, run, RunState.PAUSED) if _pause_head_changed(deps, run) else run
         publisher = make_publisher(deps, run)
         try:

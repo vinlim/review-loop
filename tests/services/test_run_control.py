@@ -226,3 +226,12 @@ def test_a_stop_on_a_paused_run_applies():
     result = stop(conn, runs_repo.get_run(conn, run.id), FakeClock())
 
     assert result.ok and result.value.state == RunState.CANCELLED
+
+
+def test_a_head_changed_pause_resumes_where_it_paused_when_the_head_is_known_not_to_have_moved():
+    conn, run = make(RunState.PUBLISHING)
+    pause(conn, run, PauseReason.HEAD_CHANGED, FakeClock())
+
+    resumed = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_unchanged=True).value
+
+    assert resumed.state == RunState.PUBLISHING

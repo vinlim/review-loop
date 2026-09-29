@@ -222,6 +222,7 @@ def test_a_remote_head_that_moved_pauses_with_head_changed_and_pushes_nothing(se
     h = harness(settings, tmp_path)
     run = to_verifying(h)
     h.github.add_pull(1004, head_sha="9" * 40, base_sha="b" * 40)
+    h.git.remote_heads["claude/change"] = "9" * 40  # someone else pushed: git and the API both show it
 
     run = step(h.deps, run)
 
