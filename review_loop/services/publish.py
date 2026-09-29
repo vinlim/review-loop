@@ -9,7 +9,7 @@ from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import Deps, check_pull_before_effect, inspect_only, pause, publisher as make_publisher, ref, repo, save
-from review_loop.services.publication import Publisher
+from review_loop.services.publication import ControlLanded, Publisher
 from review_loop.types.run import PauseReason, Run, RunState
 
 
@@ -33,6 +33,8 @@ def phase_publish(deps: Deps, run: Run) -> Run:
             publisher.post(run.id, "summary", {"pass": run.pass_no}, summary_marker, body, lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
         if repo_config.publication.mirror_inbox_in_pr_comment:
             _mirror_inbox(deps, run, publisher, pull_ref)
+    except ControlLanded as landed:
+        return landed.run  # what was posted stays posted; the rest waits for a resume, each post idempotent by marker
     except Exception as error:
         run.extra["last_github_error"] = str(error)[:500]
         return pause(deps, run, PauseReason.GITHUB_ERROR, resume_state=RunState.PUBLISHING)

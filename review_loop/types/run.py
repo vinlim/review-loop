@@ -92,6 +92,10 @@ class Run:
     extra: dict[str, str] = field(default_factory=dict)
     agents: dict[str, AgentChoice] = field(default_factory=dict)
 
+    def controlled_by_person(self) -> bool:
+        """A stop, or a pause someone ran by hand: control the coordinator must never write over or act past."""
+        return self.state == RunState.CANCELLED or (self.state == RunState.PAUSED and self.pause_reason == PauseReason.MANUAL)
+
     def mode(self) -> str:
         """`inspect` or `publish`, stored at enrolment; without it, a run counts as inspect only while paused for inspection."""
         stored = self.extra.get("mode")

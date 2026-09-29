@@ -318,3 +318,227 @@ def test_a_run_completes_while_the_api_still_shows_the_head_before_its_own_push(
     run = step(h.deps, run)
 
     assert run.state == RunState.COMPLETE and run.pause_reason is None
+
+
+# --- a pause or stop that lands during a review holds; the review is kept, not posted, and published on resume -------
+
+def test_a_manual_pause_during_the_review_holds_and_the_review_is_published_on_resume_without_asking_again(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+    h.reviewer.reply(REVIEW_984)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason, paused.resume_state) == (RunState.PAUSED, PauseReason.MANUAL, RunState.REVIEWING)
+    assert paused.pass_no == 1 and paused.extra["pending_review_pass"] == 1 and len(h.findings()) == 2
+    assert not [w for w in h.github.writes if w[0] == "post_review"], "nothing is posted under a pause"
+    h.reviewer.on_run = None
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.ASSESSING
+    assert len([w for w in h.github.writes if w[0] == "post_review"]) == 1 and len(h.reviewer.requests) == 1
+
+
+def test_a_stop_during_the_review_holds_and_keeps_the_review_as_a_record_without_posting_it(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+    h.reviewer.reply(REVIEW_984)
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+    assert runs_repo.get_run(h.conn, run.id).pass_no == 1 and len(h.findings()) == 2
+    assert not [w for w in h.github.writes if w[0] == "post_review"]
+
+
+# --- a control that lands after the checkpoint read and before the post is honoured: no post starts ------------------
+
+def land_while_the_publisher_reconciles(monkeypatch, control):
+    """Model a pause or stop that waited behind the checkpoint transaction: it lands after the coordinator's own
+    control read, while the publisher is reconciling its outbox right before the post."""
+    from review_loop.services.publication import Publisher
+
+    original = Publisher.reconcile
+
+    def reconcile_then_land(self, run_id, ref):
+        outcomes = original(self, run_id, ref)
+        control(runs_repo.get_run(self.conn, run_id))
+        return outcomes
+
+    monkeypatch.setattr(Publisher, "reconcile", reconcile_then_land)
+
+
+def test_a_pause_that_lands_between_the_checkpoint_and_the_post_withholds_the_post_until_resume(settings, tmp_path, monkeypatch):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    land_while_the_publisher_reconciles(monkeypatch, lambda current: run_control.pause(h.conn, current, PauseReason.MANUAL, FakeClock()))
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert not [w for w in h.github.writes if w[0] == "post_review"], "no post starts once the pause has landed"
+    assert runs_repo.get_run(h.conn, run.id).extra["pending_review_pass"] == 1
+    monkeypatch.undo()
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.ASSESSING
+    assert len([w for w in h.github.writes if w[0] == "post_review"]) == 1 and len(h.reviewer.requests) == 1
+
+
+def test_a_stop_that_lands_between_the_checkpoint_and_the_post_withholds_the_post_for_good(settings, tmp_path, monkeypatch):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    land_while_the_publisher_reconciles(monkeypatch, lambda current: run_control.stop(h.conn, current, FakeClock()))
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+    assert not [w for w in h.github.writes if w[0] == "post_review"]
+
+
+def test_a_stop_that_lands_during_verification_withholds_the_push(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.process.on_run = lambda call: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and h.git.pushes == []
+
+
+def test_a_pause_that_lands_at_the_reservation_itself_withholds_the_post(settings, tmp_path, monkeypatch):
+    """The reviewer's interleaving: control commits after every earlier read and right before intent is reserved."""
+    from review_loop.repositories import outbox as outbox_repo
+
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    original = outbox_repo.reserve_unless_controlled
+
+    def land_then_reserve(conn, run_id, *args, **kwargs):
+        run_control.pause(conn, runs_repo.get_run(conn, run_id), PauseReason.MANUAL, FakeClock())
+        return original(conn, run_id, *args, **kwargs)
+
+    monkeypatch.setattr(outbox_repo, "reserve_unless_controlled", land_then_reserve)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert not [w for w in h.github.writes if w[0] == "post_review"]
+    assert outbox_repo.list_entries(h.conn, run.id) == [], "no intent is recorded for an effect that never started"
+
+
+def test_a_stop_that_lands_after_the_commit_and_before_the_push_withholds_the_push(settings, tmp_path, monkeypatch):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    original_commit = h.git.commit
+
+    def commit_then_stop(path, message):
+        sha = original_commit(path, message)
+        run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+        return sha
+
+    monkeypatch.setattr(h.git, "commit", commit_then_stop)
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and h.git.pushes == [] and len(h.git.commits) == 1
+
+
+# --- the run's own push is recognised from git on resume, whatever kept it from being recorded ---------------------
+
+def test_a_pause_that_lands_during_the_push_keeps_the_push_recorded_and_the_resume_carries_on_despite_a_stale_api(settings, tmp_path, monkeypatch):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None  # the API keeps answering with the head from before the push
+    original_push = h.git.push_guarded
+
+    def push_then_pause(*args, **kwargs):
+        result = original_push(*args, **kwargs)
+        run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+        return result
+
+    monkeypatch.setattr(h.git, "push_guarded", push_then_pause)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL) and len(h.git.pushes) == 1
+    pushed = h.git.pushes[0][2]
+    assert paused.extra["remote_head"] == pushed and paused.head_sha == pushed, "the push that happened is on the record, pause or not"
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == pushed
+
+
+def test_a_crash_after_the_push_and_before_the_record_is_recognised_from_git_on_resume_despite_a_stale_api(settings, tmp_path, monkeypatch):
+    import pytest
+
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None
+    original_push = h.git.push_guarded
+
+    def push_then_die(*args, **kwargs):
+        original_push(*args, **kwargs)
+        raise RuntimeError("the coordinator lost power right after the remote accepted the push")
+
+    monkeypatch.setattr(h.git, "push_guarded", push_then_die)
+    with pytest.raises(RuntimeError):
+        step(h.deps, run)
+    monkeypatch.undo()
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.VERIFYING and stranded.extra.get("remote_head") != h.git.pushes[0][2]
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
+
+
+def test_a_crash_while_recording_the_push_leaves_findings_and_run_untouched_together_and_the_resume_records_it(settings, tmp_path, monkeypatch):
+    """The fixed events and the run's progress are one transaction: a crash between them cannot leave a pushed fix
+    looking like no change, which the resume would then record as unfixed."""
+    import pytest
+
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None  # the API stays at the pre-push head throughout
+    original = runs_repo.save_run_keeping_control
+
+    def die_after_the_checkpoint_write(conn, current):
+        original(conn, current)  # the statement itself lands
+        raise RuntimeError("the coordinator lost power right after writing the run's progress")
+
+    monkeypatch.setattr(runs_repo, "save_run_keeping_control", die_after_the_checkpoint_write)
+    with pytest.raises(RuntimeError):
+        step(h.deps, run)
+    monkeypatch.undo()
+    assert all(f.state == "accepted" for f in h.findings().values()), "the events rolled back with the progress"
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.VERIFYING and stranded.head_sha != h.git.pushes[0][2]
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
+    assert all(f.state == "fixed_pending_verification" for f in h.findings().values())

@@ -133,6 +133,9 @@ def phase_review(deps: Deps, run: Run) -> Run:
     review = outcome.value.data
     with transaction(deps.conn):
         _persist_review(deps, run, review, findings, pass_no, outcome.value.result_path, diff_text)
+    persisted = runs_repo.get_run(deps.conn, run.id)
+    if persisted is not None and externally_controlled(persisted):
+        return persisted  # the review is kept as a pending checkpoint; a resume publishes it without asking again
     return _publish_pending_review(deps, run)
 
 
@@ -153,19 +156,25 @@ def _persist_review(deps: Deps, run: Run, review: dict, findings: list[Finding],
     run.extra["pending_review_ids"] = ids
     run.extra["pending_review_diff"] = str(pass_dir(deps, run, pass_no) / "diff.patch")
     run.updated_at = now(deps)
-    runs_repo.save_run(deps.conn, run)
+    runs_repo.save_run_keeping_control(deps.conn, run)  # a pause or stop that landed during the review stands
 
 
 def _publish_pending_review(deps: Deps, run: Run) -> Run:
-    """Post the persisted review (once, by marker), write review.md, then decide what comes next."""
+    """Post the persisted review (once, by marker), write review.md, then decide what comes next. A stop or pause
+    that lands before the post leaves the review pending for the next resume."""
     import json
+
+    from review_loop.services.publication import ControlLanded
 
     review = json.loads(open(run.extra["pending_review_path"]).read())
     ids = list(run.extra.get("pending_review_ids", []))
     diff_text = open(run.extra["pending_review_diff"]).read()
     directory = pass_dir(deps, run, run.pass_no)
-    _publish_review(deps, run, review, ids, diff_text)
-    _resolve_closed_threads(deps, run)
+    try:
+        _publish_review(deps, run, review, ids, diff_text)
+        _resolve_closed_threads(deps, run)
+    except ControlLanded as landed:
+        return landed.run
     (directory / "review.md").write_text(render_review_body(review, list(zip(ids, review["findings"])),
                                                             make_marker(Role.REVIEWER, run.id, run.pass_no, "review")))
     for key in ("pending_review_pass", "pending_review_path", "pending_review_ids", "pending_review_diff"):

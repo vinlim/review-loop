@@ -11,6 +11,7 @@ from review_loop.engine.prompts import fill_template
 from review_loop.repositories import decisions as decisions_repo
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import outbox as outbox_repo
+from review_loop.repositories import runs as runs_repo
 from review_loop.services.completion_phase import complete_run
 from review_loop.services.phase_support import (
     ASSESS_ACTIONS_TEXT, Deps, alignment_block, apply_events, author_resume, decisions, events_by_finding, head_moved, inspect_only,
@@ -18,6 +19,7 @@ from review_loop.services.phase_support import (
     keep_author_session, now, pass_dir, pause, pull_values, ref, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.phase_support import publisher as make_publisher
+from review_loop.services.publication import ControlLanded
 from review_loop.types.findings import Finding
 from review_loop.types.run import Outcome, PauseReason, Run, RunState
 
@@ -27,6 +29,9 @@ APPLY = {"fix": ("decide_fix", "needs_alignment"), "keep": ("decide_keep",), "ex
 
 
 def phase_align(deps: Deps, run: Run) -> Run:
+    pending = run.extra.get("pending_alignment")
+    if pending:
+        return _publish_pending_alignment(deps, run, pending)
     disputed = _disputed_findings(deps, run)
     exhausted = [f for f in disputed if _exchanges_used(deps, run, f) >= run.budgets.max_alignment_exchanges]
     blocked = False
@@ -50,10 +55,24 @@ def phase_align(deps: Deps, run: Run) -> Run:
         if verdict is None:
             return pause(deps, run, _last_pause(deps))
         blocked = blocked or verdict == "blocked"
-    _post_alignment(deps, run, note, disputed)
+    # Everything the exchange decided is persisted by now; the post is checkpointed too, so a withheld or failed post
+    # is made on resume instead of being lost once the findings no longer read as disputed.
+    run.extra["pending_alignment"] = {"note": note["note"], "finding_ids": [f.id for f in disputed], "blocked": blocked}
+    run.updated_at = now(deps)
+    runs_repo.save_run_keeping_control(deps.conn, run)
+    return _publish_pending_alignment(deps, run, run.extra["pending_alignment"])
+
+
+def _publish_pending_alignment(deps: Deps, run: Run, pending: dict) -> Run:
+    """Post the checkpointed alignment note (once, by marker), then finish the phase the way the exchange decided."""
+    try:
+        _post_alignment(deps, run, pending["note"], list(pending["finding_ids"]))
+    except ControlLanded as landed:
+        return landed.run
     if deps.extra.pop("github_error", False):
         return pause(deps, run, PauseReason.GITHUB_ERROR, resume_state=RunState.ALIGNING)
-    if blocked:
+    run.extra.pop("pending_alignment", None)
+    if pending["blocked"]:
         return complete_run(deps, run, Outcome.BLOCKED, exhausted=False)
     return save(deps, run, _next_state(deps, run))
 
@@ -243,7 +262,7 @@ def _positions(deps: Deps, run: Run, finding: Finding) -> tuple[str, str]:
     return reviewer_position, author_position
 
 
-def _post_alignment(deps: Deps, run: Run, note: dict, disputed: list[Finding]) -> None:
+def _post_alignment(deps: Deps, run: Run, note_text: str, finding_ids: list[str]) -> None:
     if inspect_only(deps, run) or not repo(deps, run).publication.post_reviews:
         return
     pull = deps.github.fetch_pull(ref(run))
@@ -255,13 +274,15 @@ def _post_alignment(deps: Deps, run: Run, note: dict, disputed: list[Finding]) -
     if outbox_repo.has_done(deps.conn, run.id, marker):
         return
     decided = [d for d in decisions_repo.list_decisions(deps.conn, run.id) if d["source"] in DECIDED_SOURCES]
-    lines = [f"## Alignment note (pass {run.pass_no})", "", note["note"].strip(), "", "Disputed: " + ", ".join(f.id for f in disputed), ""]
-    lines += [f"Decision v{d['version']} ({d['source']}, {', '.join(d['finding_ids'])}): {d['decision']}" for d in decided[-len(disputed):]]
+    lines = [f"## Alignment note (pass {run.pass_no})", "", note_text.strip(), "", "Disputed: " + ", ".join(finding_ids), ""]
+    lines += [f"Decision v{d['version']} ({d['source']}, {', '.join(d['finding_ids'])}): {d['decision']}" for d in decided[-len(finding_ids):]]
     lines += ["", marker]
     body = "\n".join(lines) + "\n"
     pull_ref = ref(run)
     try:
         publisher.post(run.id, "alignment", {"pass": run.pass_no}, marker, body, lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
+    except ControlLanded:
+        raise
     except Exception:
         deps.extra["github_error"] = True
 

@@ -9,8 +9,15 @@ REF = PullRef("acme", "webapp", 1004)
 
 
 def make():
+    """A run row exists for "run-1": an effect is reserved against the run's control state, so the run must be recorded."""
+    from review_loop.repositories import runs as runs_repo
+    from review_loop.types.run import Budgets, Run, RunState
+
     conn = connect(":memory:")
     migrate(conn)
+    runs_repo.create_run(conn, Run(id="run-1", repo="webapp", pr_number=1004, pr_url="u", pr_author="vinlim", head_ref="claude/x",
+                                   base_ref="main", head_sha="h" * 40, base_sha="b" * 40, merge_base_sha="m" * 40, state=RunState.PUBLISHING,
+                                   budgets=Budgets(7, 2, 1), versions={}, created_at="t", updated_at="t"))
     github = FakeGitHub()
     github.add_pull(1004)
     return conn, github, Publisher(conn, github, FakeClock())

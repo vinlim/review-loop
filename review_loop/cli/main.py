@@ -256,7 +256,8 @@ def _refusal_line(box: Container, repo_name: str, pr_number: int, refusal, inspe
 
 def command_status(args, box: Container) -> int:
     runs = runs_repo.list_runs(box.conn)
-    print(render_status(runs, unattended={run.id for run in runs if _unattended(box, run)}))
+    print(render_status(runs, unattended={run.id for run in runs if _unattended(box, run)},
+                        finishing={run.id for run in runs if _finishing(box, run)}))
     return 0
 
 
@@ -268,7 +269,7 @@ def command_show(args, box: Container) -> int:
 
     repo = box.settings.repositories.get(run.repo)
     print(render_show(run, findings_repo.list_findings(box.conn, run.id), configured=repo.review.agents() if repo else None,
-                      unattended=_unattended(box, run)))
+                      unattended=_unattended(box, run), finishing=_finishing(box, run)))
     return 0
 
 
@@ -301,6 +302,11 @@ def _lock(box: Container, run) -> RunLock:
 def _unattended(box: Container, run) -> bool:
     """A run a coordinator should be driving, with no coordinator holding its lock."""
     return run.state in WORKING_STATES and not _lock(box, run).is_held()
+
+
+def _finishing(box: Container, run) -> bool:
+    """A paused run whose coordinator still holds the lock: the pause applies once the phase it is in ends."""
+    return run.state.value == "paused" and _lock(box, run).is_held()
 
 
 def command_pause(args, box: Container) -> int:

@@ -6,8 +6,19 @@ import sqlite3
 from typing import Any, Callable
 
 from review_loop.repositories import outbox as outbox_repo
+from review_loop.repositories import runs as runs_repo
 from review_loop.types.protocols import Clock, GitHubGateway
 from review_loop.types.pull_request import PullRef
+from review_loop.types.run import Run
+
+
+class ControlLanded(Exception):
+    """A person stopped or paused the run after the phase's own check: the effect was withheld and nothing was sent.
+    `run` is the run as it stands, for the phase to return."""
+
+    def __init__(self, run: Run):
+        super().__init__(f"run {run.id} is {run.state.value}; the effect was withheld")
+        self.run = run
 
 
 class Publisher:
@@ -27,7 +38,14 @@ class Publisher:
 
     def perform(self, run_id: str, kind: str, payload: dict[str, Any], marker: str,
                 operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        entry_id = outbox_repo.record_intent(self.conn, run_id, kind, payload, marker, self._now())
+        """Intent is reserved in one statement that fails once a person has stopped the run or paused it by hand, so
+        nothing starts after their control; an effect already reserved is in flight and finishes."""
+        entry_id = outbox_repo.reserve_unless_controlled(self.conn, run_id, kind, payload, marker, self._now())
+        if entry_id is None:
+            current = runs_repo.get_run(self.conn, run_id)
+            if current is None:
+                raise RuntimeError(f"run {run_id} is not recorded")
+            raise ControlLanded(current)
         try:
             receipt = operation()
         except Exception:

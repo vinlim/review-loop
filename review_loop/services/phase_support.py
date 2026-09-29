@@ -289,7 +289,7 @@ def save(deps: Deps, run: Run, state: RunState) -> Run:
 
 
 def externally_controlled(persisted: Run) -> bool:
-    return persisted.state == RunState.CANCELLED or (persisted.state == RunState.PAUSED and persisted.pause_reason == PauseReason.MANUAL)
+    return persisted.controlled_by_person()
 
 
 def inspect_only(deps: Deps, run: Run) -> bool:

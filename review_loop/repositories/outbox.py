@@ -13,6 +13,17 @@ def record_intent(conn: sqlite3.Connection, run_id: str, kind: str, payload: dic
     return int(cursor.lastrowid)
 
 
+def reserve_unless_controlled(conn: sqlite3.Connection, run_id: str, kind: str, payload: dict[str, Any], marker: str, now: str) -> int | None:
+    """Record intent only while no person has cancelled the run or paused it by hand, in one statement. The reservation
+    is the point past which a control lands too late: the effect then counts as in flight and finishes."""
+    cursor = conn.execute(
+        "insert into outbox (run_id, kind, payload_json, marker, state, created_at) select ?, ?, ?, ?, 'intended', ? from runs "
+        "where id = ? and state != 'cancelled' and not (state = 'paused' and pause_reason = 'manual')",
+        (run_id, kind, json.dumps(payload), marker, now, run_id),
+    )
+    return int(cursor.lastrowid) if cursor.rowcount == 1 else None
+
+
 def mark_done(conn: sqlite3.Connection, entry_id: int, receipt: dict[str, Any], now: str) -> None:
     conn.execute("update outbox set state = 'done', receipt_json = ?, done_at = ? where id = ?", (json.dumps(receipt), now, entry_id))
 

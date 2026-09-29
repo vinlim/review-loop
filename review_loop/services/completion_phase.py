@@ -10,6 +10,7 @@ from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import Deps, head_moved, inspect_only, now, publisher as make_publisher, ref, save
+from review_loop.services.publication import ControlLanded
 from review_loop.types.run import Outcome, Run, RunState
 
 # GitHub rejects a comment over 65,536 characters; the difference leaves room for the marker. A cut report names
@@ -55,6 +56,8 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
                 publisher.post(run.id, "final", {"outcome": outcome.value}, marker,
                                fit_for_comment(report, COMMENT_LIMIT, shown_path) + "\n" + marker,
                                lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
+        except ControlLanded as landed:
+            return landed.run
         except Exception as error:
             from review_loop.services.phase_support import pause
             from review_loop.types.run import PauseReason

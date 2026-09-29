@@ -540,9 +540,10 @@ silently alter evidence.
 
 | Situation | Behaviour |
 |---|---|
-| remote branch moves during a run | keep the old result; reconcile; review current inputs before acting; git, not the API, says whether it moved, and a resume continues in place when it did not |
+| remote branch moves during a run | keep the old result; reconcile; review current inputs before acting; git, not the API, says whether it moved, a resume continues in place when it did not, and the run's own pushed candidate is recognised from git before anything counts as foreign |
 | new human decision arrives | refresh context; invalidate affected pending assessments |
 | unexpected local edits | pause, preserve |
+| a stop or manual pause lands mid-phase | the phase in flight finishes its work, but no post and no push starts after the control landed: each is reserved in one statement that fails once the control is on the run, the checkpoint keeps the control columns, and a withheld alignment note is checkpointed for the resume |
 | duplicate start for one PR | return the active run or refuse |
 | invalid or missing agent output | no dependent write; bounded retry, then pause; partial output kept for diagnosis |
 | required checks fail | preserve evidence; one repair attempt (counted in fix runs, so a verification that ran nothing costs none), then pause; the repair may touch code the PR already had |

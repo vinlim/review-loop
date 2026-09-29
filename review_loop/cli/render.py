@@ -7,20 +7,24 @@ from review_loop.types.run import AgentChoice, PauseReason, Run, RunState
 PREPARE_TAIL_LINES = 20
 
 
-def render_status(runs: list[Run], unattended: set[str] = frozenset()) -> str:
-    """`unattended` names the runs in a working state that no coordinator process is driving."""
+def render_status(runs: list[Run], unattended: set[str] = frozenset(), finishing: set[str] = frozenset()) -> str:
+    """`unattended` names the runs in a working state that no coordinator process is driving; `finishing` the paused
+    runs whose coordinator still holds the lock, since a pause takes effect only once the running phase ends."""
     if not runs:
         return "no runs"
     lines = [f"{'run':<34} {'pr':<6} {'state':<28} {'pass':<8} updated"]
     for run in runs:
         state = _state(run) + (" (no coordinator)" if run.id in unattended else "")
+        state += " (coordinator still finishing its phase)" if run.id in finishing else ""
         lines.append(f"{run.id:<34} #{run.pr_number:<5} {state:<28} {'pass ' + str(run.pass_no):<8} {run.updated_at}")
     return "\n".join(lines)
 
 
-def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | None = None, unattended: bool = False) -> str:
+def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | None = None, unattended: bool = False,
+                finishing: bool = False) -> str:
     """`configured` is what the repository's config says now; it is printed only when it differs from what the run recorded."""
     state = _state(run) + (" (no coordinator; resume continues from this phase)" if unattended else "")
+    state += " (coordinator still finishing its phase; resume after it exits)" if finishing else ""
     lines = [
         f"run {run.id}: {run.pr_url}",
         f"state: {state}" + (f", outcome {run.outcome.value}" if run.outcome else ""),
