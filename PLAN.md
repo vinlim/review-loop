@@ -540,7 +540,7 @@ silently alter evidence.
 
 | Situation | Behaviour |
 |---|---|
-| remote branch moves during a run | keep the old result; reconcile; review current inputs before acting |
+| remote branch moves during a run | keep the old result; reconcile; review current inputs before acting; git, not the API, says whether it moved, and a resume continues in place when it did not |
 | new human decision arrives | refresh context; invalidate affected pending assessments |
 | unexpected local edits | pause, preserve |
 | duplicate start for one PR | return the active run or refuse |

@@ -35,6 +35,7 @@ class Harness:
         self.github.add_pull(1004, head_sha="a" * 40, base_sha="b" * 40)
         self.git = FakeGit()
         self.git.merge_bases[("b" * 40, "a" * 40)] = "c" * 40
+        self.git.remote_heads["claude/change"] = "a" * 40  # git's view of the branch at enrolment: the PR head
         self.process = FakeProcessRunner()
         self.process.script(["bash", ".claude/worktree-setup.sh"])
         self.reviewer, self.author = FakeAgent(), FakeAgent()

@@ -103,6 +103,9 @@ class FakeGit:
     def commit_info(self, path: str, sha: str) -> tuple[str, str]:
         return self.commit_infos.get(sha, ("", ""))
 
+    def remote_branch_head(self, path: str, url: str, branch: str) -> str:
+        return self.remote_heads.get(branch, "")
+
     def push_guarded(self, path: str, url: str, sha: str, remote_branch: str, expected_remote_sha: str):
         from review_loop.types.result import Ok
 

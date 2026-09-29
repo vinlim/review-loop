@@ -205,3 +205,11 @@ def test_the_read_only_check_sees_a_rewrite_of_an_unstaged_file_through_real_git
     (repo / "a.txt").write_text("rewritten during it\n")
 
     assert read_only_breach(deps, request, before) == "the worktree changed during a read-only phase: a.txt"
+
+
+def test_the_git_adapter_reads_a_remote_branch_head_and_an_empty_string_for_a_missing_branch(repo, tmp_path):
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+    origin = str(tmp_path / "origin.git")
+
+    assert git.remote_branch_head(str(repo), origin, "main") == sh(repo, "git", "rev-parse", "HEAD")
+    assert git.remote_branch_head(str(repo), origin, "no-such-branch") == ""

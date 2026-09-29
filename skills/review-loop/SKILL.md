@@ -183,7 +183,7 @@ same two steps as a start; a resume without the waiter leaves you with no way to
 
 | Reason | Cause | Action |
 |---|---|---|
-| `head_changed` | the remote branch moved | `resume` goes back through preparation; safe to run |
+| `head_changed` | the remote branch moved, or GitHub's API answered from before a push git had already confirmed | `resume`; safe to run. It goes back through preparation when git shows the branch moved, and continues where it paused when git shows it did not |
 | `usage_limit` | an agent CLI hit its quota | tell the user; `resume` after the window they name |
 | `auth_required` | an agent or `gh` login expired | the user renews it in the CLI's own flow; then `resume` |
 | `checks_failed` | required checks failed after the fix and its one repair, or could not run (nothing selected and no fallback registered, or a timeout) | show the verification log path and the failing test; the user decides. A failure in code the PR already had gets the same repair attempt as one the fix introduced |

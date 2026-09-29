@@ -71,6 +71,9 @@ class GitClient(Protocol):
 
     def push_guarded(self, path: str, url: str, sha: str, remote_branch: str, expected_remote_sha: str) -> Result[str, str]: ...
 
+    # Where the remote branch points right now, from git itself; "" when the branch does not exist.
+    def remote_branch_head(self, path: str, url: str, branch: str) -> str: ...
+
 
 class GitHubGateway(Protocol):
     def fetch_pull(self, ref: PullRef) -> PullRequest: ...

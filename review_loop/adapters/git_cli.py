@@ -105,7 +105,7 @@ class GitCli:
     def push_guarded(self, path: str, url: str, sha: str, remote_branch: str, expected_remote_sha: str) -> Result[str, str]:
         """Push one verified commit to one branch: the remote must still show the expected parent, the push
         is by SHA with a lease and no implicit refs, and the remote must show the SHA afterwards."""
-        remote_sha = self._remote_sha(path, url, remote_branch)
+        remote_sha = self.remote_branch_head(path, url, remote_branch)
         if remote_sha == sha:
             return Ok(sha)
         if remote_sha != expected_remote_sha:
@@ -119,11 +119,11 @@ class GitCli:
             if "stale info" in completed.stderr or "rejected" in completed.stderr:
                 return Err("head_changed")
             raise RuntimeError(f"git push to {remote_branch} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
-        if self._remote_sha(path, url, remote_branch) != sha:
+        if self.remote_branch_head(path, url, remote_branch) != sha:
             return Err("push_unverified")
         return Ok(sha)
 
-    def _remote_sha(self, path: str, url: str, branch: str) -> str:
+    def remote_branch_head(self, path: str, url: str, branch: str) -> str:
         listed = self._git(path, "ls-remote", url, f"refs/heads/{branch}").split()
         return listed[0] if listed else ""
 

@@ -13,8 +13,9 @@ from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import outbox as outbox_repo
 from review_loop.services.completion_phase import complete_run
 from review_loop.services.phase_support import (
-    ASSESS_ACTIONS_TEXT, Deps, alignment_block, apply_events, author_resume, decisions, events_by_finding, inspect_only, instruction_files,
-    keep_author_session, now, pass_dir, pause, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
+    ASSESS_ACTIONS_TEXT, Deps, alignment_block, apply_events, author_resume, decisions, events_by_finding, head_moved, inspect_only,
+    instruction_files,
+    keep_author_session, now, pass_dir, pause, pull_values, ref, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.phase_support import publisher as make_publisher
 from review_loop.types.findings import Finding
@@ -246,7 +247,7 @@ def _post_alignment(deps: Deps, run: Run, note: dict, disputed: list[Finding]) -
     if inspect_only(deps, run) or not repo(deps, run).publication.post_reviews:
         return
     pull = deps.github.fetch_pull(ref(run))
-    if pull.state != "open" or pull.head_sha != remote_head(run):
+    if pull.state != "open" or head_moved(deps, run):
         return
     publisher = make_publisher(deps, run)
     publisher.reconcile(run.id, ref(run))

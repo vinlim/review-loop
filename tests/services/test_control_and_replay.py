@@ -128,6 +128,7 @@ def test_publish_after_the_head_moved_pauses_before_writing(settings, tmp_path):
     run = to_publishing(h)
     writes = len(h.github.writes)
     h.github.add_pull(1004, head_sha="9" * 40, base_sha="b" * 40)
+    h.git.remote_heads["claude/change"] = "9" * 40  # someone else pushed: git and the API both show it
 
     run = step(h.deps, run)
 
@@ -254,3 +255,66 @@ def test_a_phase_pause_after_an_external_stop_keeps_the_stop(settings, tmp_path)
     final = step(h.deps, run)
 
     assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+
+
+# --- the API can lag a push git already confirmed; git decides whether the branch moved -------------------------
+
+def test_publishing_proceeds_when_the_api_still_shows_the_head_before_the_runs_own_push(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    pushed = run.extra["remote_head"]
+    h.github.move_head(1004, "a" * 40)  # GitHub answering from before the push it has not caught up with
+    assert h.git.remote_heads["claude/change"] == pushed
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.REREVIEWING and run.pause_reason is None
+
+
+def test_publishing_pauses_when_git_confirms_the_branch_moved(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    h.github.move_head(1004, "f" * 40)
+    h.git.remote_heads["claude/change"] = "f" * 40
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.HEAD_CHANGED
+
+
+def test_a_verified_fix_is_pushed_when_the_api_lags_the_runs_previous_push(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    run.extra["remote_head"] = "p" * 40  # a push this run made earlier, which git shows and the API does not yet
+    h.git.remote_heads["claude/change"] = "p" * 40
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PUBLISHING
+    assert h.git.pushes[-1][4] == "p" * 40
+
+
+def test_publishing_pauses_when_git_shows_a_move_the_api_has_not_caught_up_with(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    writes = len(h.github.writes)
+    h.git.remote_heads["claude/change"] = "x" * 40  # someone else pushed; the API still answers with the expected head
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.HEAD_CHANGED and len(h.github.writes) == writes
+
+
+def test_a_run_completes_while_the_api_still_shows_the_head_before_its_own_push(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    h.github.move_head(1004, "a" * 40)  # stale for the rest of the run
+    run = step(h.deps, run)
+    assert run.state == RunState.REREVIEWING
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.COMPLETE and run.pause_reason is None
