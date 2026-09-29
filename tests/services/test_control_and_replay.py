@@ -353,3 +353,64 @@ def test_a_stop_during_the_review_holds_and_keeps_the_review_as_a_record_without
     assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
     assert runs_repo.get_run(h.conn, run.id).pass_no == 1 and len(h.findings()) == 2
     assert not [w for w in h.github.writes if w[0] == "post_review"]
+
+
+# --- a control that lands after the checkpoint read and before the post is honoured: no post starts ------------------
+
+def land_while_the_publisher_reconciles(monkeypatch, control):
+    """Model a pause or stop that waited behind the checkpoint transaction: it lands after the coordinator's own
+    control read, while the publisher is reconciling its outbox right before the post."""
+    from review_loop.services.publication import Publisher
+
+    original = Publisher.reconcile
+
+    def reconcile_then_land(self, run_id, ref):
+        outcomes = original(self, run_id, ref)
+        control(runs_repo.get_run(self.conn, run_id))
+        return outcomes
+
+    monkeypatch.setattr(Publisher, "reconcile", reconcile_then_land)
+
+
+def test_a_pause_that_lands_between_the_checkpoint_and_the_post_withholds_the_post_until_resume(settings, tmp_path, monkeypatch):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    land_while_the_publisher_reconciles(monkeypatch, lambda current: run_control.pause(h.conn, current, PauseReason.MANUAL, FakeClock()))
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert not [w for w in h.github.writes if w[0] == "post_review"], "no post starts once the pause has landed"
+    assert runs_repo.get_run(h.conn, run.id).extra["pending_review_pass"] == 1
+    monkeypatch.undo()
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.ASSESSING
+    assert len([w for w in h.github.writes if w[0] == "post_review"]) == 1 and len(h.reviewer.requests) == 1
+
+
+def test_a_stop_that_lands_between_the_checkpoint_and_the_post_withholds_the_post_for_good(settings, tmp_path, monkeypatch):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    land_while_the_publisher_reconciles(monkeypatch, lambda current: run_control.stop(h.conn, current, FakeClock()))
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and runs_repo.get_run(h.conn, run.id).state == RunState.CANCELLED
+    assert not [w for w in h.github.writes if w[0] == "post_review"]
+
+
+def test_a_stop_that_lands_during_verification_withholds_the_push(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.process.on_run = lambda call: run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and h.git.pushes == []

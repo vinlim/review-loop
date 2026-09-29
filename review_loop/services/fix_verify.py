@@ -12,6 +12,7 @@ from review_loop.engine.scope import scope_drift
 from review_loop.engine.trailers import forbidden_trailer_lines, strip_forbidden_trailers
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import phases as phases_repo
+from review_loop.repositories import runs as runs_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
     Deps, apply_events, author_resume, decisions, events_by_finding, head_moved, instruction_files, keep_author_session, now, pass_dir,
@@ -127,6 +128,9 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
     if not repo_config.publication.push_verified_fixes:
         run.extra["unpushed_commits"] = run.extra.get("unpushed_commits", []) + [sha]
         return _record_pushed(deps, run, sha, pushed=False)
+    current = runs_repo.get_run(deps.conn, run.id)
+    if current is not None and current.controlled_by_person():
+        return current  # a stop or pause landed during the checks: the verified commit stays local, unpushed
     pushed = deps.git.push_guarded(run.worktree_path, repo_config.remote, sha, run.head_ref, remote_head(run))
     if not pushed.ok:
         reason = PauseReason.HEAD_CHANGED if pushed.error == "head_changed" else PauseReason.PUSH_FAILED

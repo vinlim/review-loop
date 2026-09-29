@@ -543,6 +543,7 @@ silently alter evidence.
 | remote branch moves during a run | keep the old result; reconcile; review current inputs before acting; git, not the API, says whether it moved, and a resume continues in place when it did not |
 | new human decision arrives | refresh context; invalidate affected pending assessments |
 | unexpected local edits | pause, preserve |
+| a stop or manual pause lands mid-phase | the phase in flight finishes its work, but no post and no push starts after the control landed: every external write re-reads the run right before it leaves, and the checkpoint keeps the control columns |
 | duplicate start for one PR | return the active run or refuse |
 | invalid or missing agent output | no dependent write; bounded retry, then pause; partial output kept for diagnosis |
 | required checks fail | preserve evidence; one repair attempt (counted in fix runs, so a verification that ran nothing costs none), then pause; the repair may touch code the PR already had |

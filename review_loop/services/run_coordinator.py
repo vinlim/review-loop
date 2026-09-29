@@ -160,15 +160,21 @@ def _persist_review(deps: Deps, run: Run, review: dict, findings: list[Finding],
 
 
 def _publish_pending_review(deps: Deps, run: Run) -> Run:
-    """Post the persisted review (once, by marker), write review.md, then decide what comes next."""
+    """Post the persisted review (once, by marker), write review.md, then decide what comes next. A stop or pause
+    that lands before the post leaves the review pending for the next resume."""
     import json
+
+    from review_loop.services.publication import ControlLanded
 
     review = json.loads(open(run.extra["pending_review_path"]).read())
     ids = list(run.extra.get("pending_review_ids", []))
     diff_text = open(run.extra["pending_review_diff"]).read()
     directory = pass_dir(deps, run, run.pass_no)
-    _publish_review(deps, run, review, ids, diff_text)
-    _resolve_closed_threads(deps, run)
+    try:
+        _publish_review(deps, run, review, ids, diff_text)
+        _resolve_closed_threads(deps, run)
+    except ControlLanded as landed:
+        return landed.run
     (directory / "review.md").write_text(render_review_body(review, list(zip(ids, review["findings"])),
                                                             make_marker(Role.REVIEWER, run.id, run.pass_no, "review")))
     for key in ("pending_review_pass", "pending_review_path", "pending_review_ids", "pending_review_diff"):

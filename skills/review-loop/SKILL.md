@@ -175,7 +175,8 @@ have told the user the id.
 - `pause <run-id>` and `stop <run-id>` from another shell take effect before the next phase. The
   phase already running finishes first: `status` shows `(coordinator still finishing its phase)`
   until the coordinator exits, and a `resume` before that is refused because the lock is held. Wait
-  for the suffix to go, then act. `stop` cancels further work and keeps the worktree, logs and
+  for the suffix to go, then act. No post or push starts once the pause or stop has landed; only an
+  effect already in flight completes. `stop` cancels further work and keeps the worktree, logs and
   records; nothing is reset.
 
 ## 6. Paused runs

@@ -18,6 +18,7 @@ from review_loop.services.phase_support import (
     keep_author_session, now, pass_dir, pause, pull_values, ref, repo, request, run_agent, save, template, verification_lines,
 )
 from review_loop.services.phase_support import publisher as make_publisher
+from review_loop.services.publication import ControlLanded
 from review_loop.types.findings import Finding
 from review_loop.types.run import Outcome, PauseReason, Run, RunState
 
@@ -50,7 +51,10 @@ def phase_align(deps: Deps, run: Run) -> Run:
         if verdict is None:
             return pause(deps, run, _last_pause(deps))
         blocked = blocked or verdict == "blocked"
-    _post_alignment(deps, run, note, disputed)
+    try:
+        _post_alignment(deps, run, note, disputed)
+    except ControlLanded as landed:
+        return landed.run
     if deps.extra.pop("github_error", False):
         return pause(deps, run, PauseReason.GITHUB_ERROR, resume_state=RunState.ALIGNING)
     if blocked:
@@ -262,6 +266,8 @@ def _post_alignment(deps: Deps, run: Run, note: dict, disputed: list[Finding]) -
     pull_ref = ref(run)
     try:
         publisher.post(run.id, "alignment", {"pass": run.pass_no}, marker, body, lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
+    except ControlLanded:
+        raise
     except Exception:
         deps.extra["github_error"] = True
 
