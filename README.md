@@ -82,8 +82,10 @@ in which case the pause was the API lagging a push and the run continues where i
 `pause` from another terminal take effect before the running loop's next phase: the phase already
 running finishes first, `status` says `(coordinator still finishing its phase)` until it does, and a
 review that finishes under a pause is kept as a checkpoint and published on resume instead of being
-posted. No post and no push starts once one has landed: every external write takes a last look at
-the run before it leaves, and one already in flight is the only thing that completes. They stand
+posted. No post and no push starts once one has landed: every post reserves its place in the outbox
+in one statement that fails once a person's control is on the run, the push reserves the
+coordinator's own record the same way, and an effect already reserved is the only thing that
+completes. They stand
 even when the coordinator records a pause of its own afterwards, from a failed probe or a crash
 included. Both change only the run's control
 state, so progress the coordinator persisted in the meantime is kept, and neither touches a run that

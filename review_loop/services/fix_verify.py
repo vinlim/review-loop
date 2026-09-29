@@ -128,9 +128,11 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
     if not repo_config.publication.push_verified_fixes:
         run.extra["unpushed_commits"] = run.extra.get("unpushed_commits", []) + [sha]
         return _record_pushed(deps, run, sha, pushed=False)
-    current = runs_repo.get_run(deps.conn, run.id)
-    if current is not None and current.controlled_by_person():
-        return current  # a stop or pause landed during the checks: the verified commit stays local, unpushed
+    # The push is reserved by writing the coordinator's own record in one statement that fails once a person's control
+    # has landed; a control that lands after it finds the push in flight. The verified commit stays local when refused.
+    run.updated_at = now(deps)
+    if not runs_repo.save_run_unless_controlled(deps.conn, run):
+        return runs_repo.get_run(deps.conn, run.id) or run
     pushed = deps.git.push_guarded(run.worktree_path, repo_config.remote, sha, run.head_ref, remote_head(run))
     if not pushed.ok:
         reason = PauseReason.HEAD_CHANGED if pushed.error == "head_changed" else PauseReason.PUSH_FAILED

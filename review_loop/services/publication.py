@@ -38,12 +38,14 @@ class Publisher:
 
     def perform(self, run_id: str, kind: str, payload: dict[str, Any], marker: str,
                 operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        """The last look before anything leaves: a stop or manual pause that landed since the phase's own check
-        withholds the effect, so nothing starts after a person's control, whatever is already in flight."""
-        current = runs_repo.get_run(self.conn, run_id)
-        if current is not None and current.controlled_by_person():
+        """Intent is reserved in one statement that fails once a person has stopped the run or paused it by hand, so
+        nothing starts after their control; an effect already reserved is in flight and finishes."""
+        entry_id = outbox_repo.reserve_unless_controlled(self.conn, run_id, kind, payload, marker, self._now())
+        if entry_id is None:
+            current = runs_repo.get_run(self.conn, run_id)
+            if current is None:
+                raise RuntimeError(f"run {run_id} is not recorded")
             raise ControlLanded(current)
-        entry_id = outbox_repo.record_intent(self.conn, run_id, kind, payload, marker, self._now())
         try:
             receipt = operation()
         except Exception:

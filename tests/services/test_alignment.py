@@ -210,3 +210,62 @@ def test_neither_arbiter_request_carries_the_author_cli_login(settings, tmp_path
     codex_request, claude_request = h.reviewer.requests[-1], h.author.requests[-1]
     assert codex_request.phase == "arbitrate" and claude_request.phase == "arbitrate"
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in codex_request.env and "CLAUDE_CODE_OAUTH_TOKEN" not in claude_request.env
+
+
+# --- the alignment post is a checkpoint: withheld or failed, it is posted on resume, once ---------------------------
+
+def alignment_posts(h):
+    return [write for write in h.github.writes if write[0] == "post_comment" and "Alignment" in write[2]]
+
+
+def test_an_alignment_post_withheld_by_a_pause_is_posted_on_resume_and_the_phase_then_finishes(settings, tmp_path, monkeypatch):
+    from review_loop.repositories import runs as runs_repo
+    from review_loop.services import run_control
+    from review_loop.types.run import PauseReason
+    from tests.fakes.clock import FakeClock
+    from tests.services.test_control_and_replay import land_while_the_publisher_reconciles
+
+    h, run = to_dispute(settings, tmp_path)
+    h.reviewer.reply(NOTE)
+    h.author.reply(agree("R1-F1"))
+    land_while_the_publisher_reconciles(monkeypatch, lambda current: run_control.pause(h.conn, current, PauseReason.MANUAL, FakeClock()))
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert alignment_posts(h) == [] and runs_repo.get_run(h.conn, run.id).extra["pending_alignment"]["finding_ids"] == ["R1-F1"]
+    monkeypatch.undo()
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.FIXING and len(alignment_posts(h)) == 1 and NOTE["note"] in alignment_posts(h)[0][2]
+    assert "pending_alignment" not in run.extra and len(h.reviewer.requests) == 3
+
+
+def test_an_alignment_post_that_fails_at_github_is_posted_on_resume_without_redoing_the_exchange(settings, tmp_path):
+    from review_loop.repositories import runs as runs_repo
+    from review_loop.services import run_control
+    from review_loop.types.run import PauseReason
+    from tests.fakes.clock import FakeClock
+
+    h, run = to_dispute(settings, tmp_path)
+    h.reviewer.reply(NOTE)
+    h.author.reply(agree("R1-F1"))
+    calls = {"n": 0}
+
+    def fail_once(kind):
+        if kind == "post_comment" and calls["n"] == 0:
+            calls["n"] += 1
+            raise RuntimeError("502 from GitHub")
+
+    h.github.on_call = fail_once
+    paused = step(h.deps, run)
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.GITHUB_ERROR)
+    requests_before = (len(h.reviewer.requests), len(h.author.requests))
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock()).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.FIXING and len(alignment_posts(h)) == 1
+    assert (len(h.reviewer.requests), len(h.author.requests)) == requests_before

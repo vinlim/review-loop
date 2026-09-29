@@ -414,3 +414,44 @@ def test_a_stop_that_lands_during_verification_withholds_the_push(settings, tmp_
     final = step(h.deps, run)
 
     assert final.state == RunState.CANCELLED and h.git.pushes == []
+
+
+def test_a_pause_that_lands_at_the_reservation_itself_withholds_the_post(settings, tmp_path, monkeypatch):
+    """The reviewer's interleaving: control commits after every earlier read and right before intent is reserved."""
+    from review_loop.repositories import outbox as outbox_repo
+
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    original = outbox_repo.reserve_unless_controlled
+
+    def land_then_reserve(conn, run_id, *args, **kwargs):
+        run_control.pause(conn, runs_repo.get_run(conn, run_id), PauseReason.MANUAL, FakeClock())
+        return original(conn, run_id, *args, **kwargs)
+
+    monkeypatch.setattr(outbox_repo, "reserve_unless_controlled", land_then_reserve)
+
+    paused = step(h.deps, run)
+
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert not [w for w in h.github.writes if w[0] == "post_review"]
+    assert outbox_repo.list_entries(h.conn, run.id) == [], "no intent is recorded for an effect that never started"
+
+
+def test_a_stop_that_lands_after_the_commit_and_before_the_push_withholds_the_push(settings, tmp_path, monkeypatch):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    original_commit = h.git.commit
+
+    def commit_then_stop(path, message):
+        sha = original_commit(path, message)
+        run_control.stop(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock())
+        return sha
+
+    monkeypatch.setattr(h.git, "commit", commit_then_stop)
+
+    final = step(h.deps, run)
+
+    assert final.state == RunState.CANCELLED and h.git.pushes == [] and len(h.git.commits) == 1
