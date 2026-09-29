@@ -511,3 +511,34 @@ def test_a_crash_after_the_push_and_before_the_record_is_recognised_from_git_on_
     run = step(h.deps, resumed)
 
     assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
+
+
+def test_a_crash_while_recording_the_push_leaves_findings_and_run_untouched_together_and_the_resume_records_it(settings, tmp_path, monkeypatch):
+    """The fixed events and the run's progress are one transaction: a crash between them cannot leave a pushed fix
+    looking like no change, which the resume would then record as unfixed."""
+    import pytest
+
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.on_push = None  # the API stays at the pre-push head throughout
+    original = runs_repo.save_run_keeping_control
+
+    def die_after_the_checkpoint_write(conn, current):
+        original(conn, current)  # the statement itself lands
+        raise RuntimeError("the coordinator lost power right after writing the run's progress")
+
+    monkeypatch.setattr(runs_repo, "save_run_keeping_control", die_after_the_checkpoint_write)
+    with pytest.raises(RuntimeError):
+        step(h.deps, run)
+    monkeypatch.undo()
+    assert all(f.state == "accepted" for f in h.findings().values()), "the events rolled back with the progress"
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.VERIFYING and stranded.head_sha != h.git.pushes[0][2]
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
+    assert all(f.state == "fixed_pending_verification" for f in h.findings().values())

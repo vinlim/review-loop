@@ -16,7 +16,7 @@ from review_loop.repositories import runs as runs_repo
 from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import (
     Deps, apply_events, author_resume, decisions, events_by_finding, instruction_files, keep_author_session, now, pass_dir, pause,
-    project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, verification_lines,
+    project_env, pull_values, ref, remote_head, repo, request, run_agent, save, template, transaction, verification_lines,
 )
 from review_loop.services.pytest_checks import pytest_check_env
 from review_loop.services.workspace import registered_script_files
@@ -144,18 +144,21 @@ def _commit_and_push(deps: Deps, run: Run, repo_config) -> Run:
 
 
 def _record_pushed(deps: Deps, run: Run, sha: str, pushed: bool = True) -> Run:
-    """What happened on the branch is progress, written whatever a person did meanwhile; only the transition is theirs to refuse."""
+    """What happened on the branch is progress, written with the findings it fixed in one transaction: a crash leaves
+    either both or neither, never a head that reads as "no change" beside findings still waiting for one. The progress
+    lands whatever a person did meanwhile; only the transition is theirs to refuse."""
     run.head_sha = sha
     run.extra["verified_head"] = sha
     if pushed:
         run.extra["remote_head"] = sha
     run.extra[f"fix_commit_pass_{run.pass_no}"] = sha
-    run.updated_at = now(deps)
-    runs_repo.save_run_keeping_control(deps.conn, run)
     at = now(deps)
-    for finding in findings_repo.list_findings(deps.conn, run.id):
-        if finding.state == FindingState.ACCEPTED:
-            apply_events(deps, run, finding, ("fixed",), "coordinator", {"commit": sha, "pass": run.pass_no, "pushed": pushed}, at)
+    with transaction(deps.conn):
+        for finding in findings_repo.list_findings(deps.conn, run.id):
+            if finding.state == FindingState.ACCEPTED:
+                apply_events(deps, run, finding, ("fixed",), "coordinator", {"commit": sha, "pass": run.pass_no, "pushed": pushed}, at)
+        run.updated_at = at
+        runs_repo.save_run_keeping_control(deps.conn, run)
     return save(deps, run, RunState.PUBLISHING)
 
 
