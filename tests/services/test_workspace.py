@@ -196,3 +196,92 @@ def test_a_fallback_check_script_counts_as_a_registered_script(settings):
     repo = dataclasses.replace(repo, verification=dataclasses.replace(repo.verification, fallback=[["scripts/full-suite.sh"]]))
 
     assert "scripts/full-suite.sh" in registered_script_files(repo)
+
+
+def test_a_dirty_worktree_holding_exactly_the_loops_unverified_fix_is_discarded_and_kept_as_a_patch(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "o" * 40  # the old head the fix was made on
+    git.clean[path] = False
+    git.working_trees[path] = "f" * 40
+    git.diff_text = "diff --git a/app/X.php b/app/X.php\n+the unverified fix\n"
+    patch = tmp_path / "runs" / "webapp-1004-x" / "discarded-fix-1.patch"
+
+    recorded = []
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=patch,
+                               on_discard=lambda written: recorded.append((written, [call[0] for call in git.calls])))
+
+    assert result.ok and result.value.discarded_patch == str(patch)
+    assert patch.read_text() == git.diff_text and ("write_patch", path, "o" * 40, "f" * 40, str(patch)) in git.calls
+    names = [call[0] for call in git.calls]
+    assert names.index("write_patch") < names.index("stage_all") < names.index("reset_hard") and ("reset_hard", path, "h" * 40) in git.calls
+    assert recorded == [(str(patch), names[:names.index("write_patch") + 1])], "the receipt is recorded before staging or the reset"
+
+
+def test_a_dirty_worktree_that_is_not_exactly_the_loops_fix_still_pauses_and_its_index_is_untouched(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.clean[path] = False
+    git.working_trees[path] = "x" * 40  # someone edited the tree after the loop left it
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert not result.ok and result.error == WorkspaceProblem.DIRTY
+    assert not any(call[0] in ("stage_all", "reset_hard", "write_patch") for call in git.calls)
+    assert not (tmp_path / "p.patch").exists()
+
+
+def test_a_clean_worktree_holding_someone_elses_commit_is_never_reset(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "u" * 40  # a person committed in the worktree; git reports it clean
+    git.working_trees[path] = "x" * 40
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert not result.ok and result.error == WorkspaceProblem.UNEXPECTED_COMMIT
+    assert not any(call[0] in ("reset_hard", "stage_all", "write_patch") for call in git.calls) and git.heads[path] == "u" * 40
+    assert process.calls == []
+
+
+def test_a_clean_worktree_at_the_loops_own_commit_is_reset_to_the_adopted_head(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "c" * 40  # the loop's verified commit, whose tree is the loop's snapshot
+    git.working_trees[path] = "f" * 40
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert result.ok and ("reset_hard", path, "h" * 40) in git.calls
+
+
+def test_without_a_snapshot_a_clean_worktree_is_reset_only_from_a_commit_the_run_recorded(settings, tmp_path):
+    def prepare_from(head):
+        log, git, process, repo = make(settings, tmp_path)
+        path = str(repo.worktree_root / "webapp-1004")
+        git.worktrees.add(path)
+        git.branches[path] = "review-loop/pr-1004"
+        git.heads[path] = head
+        result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                                   changed_paths=[], own_heads={"a" * 40, "c" * 40})
+        return result, any(call[0] == "reset_hard" for call in git.calls)
+
+    prepared_head, reset = prepare_from("a" * 40)
+    assert prepared_head.ok and reset
+    own_commit, reset = prepare_from("c" * 40)
+    assert own_commit.ok and reset
+    foreign, reset = prepare_from("u" * 40)
+    assert not foreign.ok and foreign.error == WorkspaceProblem.UNEXPECTED_COMMIT and not reset

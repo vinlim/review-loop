@@ -1,4 +1,5 @@
 """Findings about control state and replay: pause from outside, stale PR state before an effect, receipts after crashes."""
+from pathlib import Path
 
 from review_loop.config.settings import PublicationConfig
 from review_loop.repositories import outbox as outbox_repo
@@ -542,3 +543,401 @@ def test_a_crash_while_recording_the_push_leaves_findings_and_run_untouched_toge
 
     assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
     assert all(f.state == "fixed_pending_verification" for f in h.findings().values())
+
+
+# --- a base fix flows in: someone moves the branch, a resume re-prepares on it, the loop's unverified fix is discarded ----
+
+FAILING = "   FAILED  Tests\\Feature\\ChannelWabaEventIngestionTest > a redelivered ACCOUNT_OFFBOARDED does not alert twice\n" \
+          "Failed asserting that 0 is identical to 1.\n  Tests:    1 failed, 5 skipped, 42 passed (90 assertions)\n"
+
+
+def test_preparation_adopts_the_head_git_shows_and_records_it_so_the_next_effect_does_not_pause(settings, tmp_path):
+    from review_loop.services.phase_support import head_moved
+
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    run = run_control.pause(h.conn, run, PauseReason.MANUAL, FakeClock())
+    h.git.remote_heads["claude/change"] = "e" * 40  # someone else pushed; the API has not caught up
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and run.head_sha == "e" * 40 and run.extra["remote_head"] == "e" * 40
+    names = [call[0] for call in h.git.calls[calls_before:]]
+    assert names.index("fetch") < names.index("merge_base"), "the new head is fetched before anything reads it"
+    assert not head_moved(h.deps, run)
+
+
+def test_checks_that_fail_on_the_base_branch_recover_once_the_base_fix_is_merged_into_the_pr(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout=FAILING)
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    failure = run.extra["checks_failure"]
+    assert any("ChannelWabaEventIngestionTest" in line for line in failure["excerpt"]) and failure["log"].endswith("verify-2.log")
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = run.extra["loop_tree"]  # exactly what the loop left
+    h.git.remote_heads["claude/change"] = "e" * 40  # the base fix, merged into the PR branch
+    h.github.move_head(1004, "e" * 40)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and run.head_sha == "e" * 40
+    assert ("reset_hard", worktree, "e" * 40) in h.git.calls
+    patch = run.extra["discarded_fix_patches"][-1]
+    assert patch.endswith("discarded-fix-1.patch") and Path(patch).exists()
+    assert all(f.state == "accepted" for f in h.findings().values()), "the unverified fix is redone on the new head"
+
+
+def to_checks_failed(h):
+    """The fix and its repair both fail the same check, as in the base-fix test, ending in a checks_failed pause."""
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout=FAILING)
+    run = step(h.deps, to_verifying(h))
+    h.author.reply(FIX)
+    return step(h.deps, step(h.deps, run))
+
+
+def move_branch(h, sha="e" * 40):
+    h.git.remote_heads["claude/change"] = sha
+    h.github.move_head(1004, sha)
+
+
+# --- a review is bound to the commit it inspected: a pending one is never replayed onto a head it did not see ----------
+
+def test_a_review_left_pending_on_a_commit_the_branch_moved_from_is_reviewed_again_on_the_new_head_before_completion(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+    h.reviewer.reply(APPROVE)
+    paused = step(h.deps, run)
+    assert paused.extra["pending_review_pass"] == 1 and paused.extra["last_reviewed_sha"] == "a" * 40
+    h.reviewer.on_run = None
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+    h.reviewer.reply(APPROVE)
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.extra["last_reviewed_sha"] == "e" * 40
+    assert len(h.reviewer.requests) == 2 and "e" * 40 in h.reviewer.requests[-1].prompt
+    reviews = [write for write in h.github.writes if write[0] == "post_review"]
+    assert len(reviews) == 1 and reviews[0][3] == "e" * 40, "only the review of the new head is posted, once"
+    assert (tmp_path / "runs" / run.id / "pass-1-superseded-1" / "review-output.json").exists(), "the stale review is kept"
+
+
+def test_a_review_posted_before_the_branch_moved_is_kept_and_the_new_head_is_rereviewed_before_completion(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.reply(APPROVE)
+    original_save = runs_repo.save_run_unless_controlled
+
+    def crash_after_publish(conn, run_object):
+        if [w for w in h.github.writes if w[0] == "post_review"]:
+            raise RuntimeError("simulated crash after the review was posted, before its bookkeeping was saved")
+        return original_save(conn, run_object)
+
+    import review_loop.services.phase_support as support
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
+    try:
+        try:
+            step(h.deps, run)
+        except RuntimeError:
+            pass
+    finally:
+        support.runs_repo.save_run_unless_controlled = original_save
+    move_branch(h)
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.REVIEWING and stranded.extra["pending_review_pass"] == 1
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True, head_moved=True).value
+    h.reviewer.reply(APPROVE)
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.pass_no == 2 and run.extra["last_reviewed_sha"] == "e" * 40
+    reviews = [write for write in h.github.writes if write[0] == "post_review"]
+    assert [review[3] for review in reviews] == ["a" * 40, "e" * 40], "the posted review keeps its commit; the new head gets its own"
+
+
+def test_at_the_pass_budget_a_head_the_last_review_never_saw_completes_as_exhausted_instead_of_another_pass(settings, tmp_path):
+    from tests.services.test_coordinator_phases import with_review
+
+    h = Harness(with_review(settings, max_review_passes=1), tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.reply(APPROVE)
+    original_save = runs_repo.save_run_unless_controlled
+
+    def crash_after_publish(conn, run_object):
+        if [w for w in h.github.writes if w[0] == "post_review"]:
+            raise RuntimeError("simulated crash after the review was posted")
+        return original_save(conn, run_object)
+
+    import review_loop.services.phase_support as support
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
+    try:
+        try:
+            step(h.deps, run)
+        except RuntimeError:
+            pass
+    finally:
+        support.runs_repo.save_run_unless_controlled = original_save
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), unattended=True, head_moved=True).value
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.outcome.value == "complete_with_exceptions" and run.pass_no == 1
+    assert len(h.reviewer.requests) == 1
+
+
+# --- recovery: the loop's ownership snapshot, the patch receipt -------------------------------------------------------------
+
+def test_a_checks_failed_run_paused_without_a_recorded_loop_tree_recovers_from_its_verification_record(settings, tmp_path):
+    from review_loop.repositories import verification as verification_repo
+
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    run.extra.pop("loop_tree")  # paused before the loop recorded the tree it leaves
+    runs_repo.save_run(h.conn, run)
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = verification_repo.list_results(h.conn, run.id)[-1]["tree_hash"]
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", worktree, "e" * 40) in h.git.calls
+    assert len(run.extra["discarded_fix_patches"]) == 1
+
+
+def test_a_tree_changed_while_the_checks_ran_is_never_discarded_by_a_later_recovery(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.tree_hashes = ["t" * 40, "x" * 40]  # someone edited a tracked file while the required check ran
+    run = step(h.deps, run)
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.UNEXPECTED_COMMIT
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = "x" * 40
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.WORKSPACE_DIRTY
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("write_patch", "diff", "stage_all", "reset_hard")]
+
+
+def test_a_formatter_that_edits_then_fails_leaves_a_tree_a_later_recovery_can_discard(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+    from tests.services.test_verify_guards import with_verification
+
+    h = harness(with_verification(settings, format=[["vendor/bin/pint", "--dirty"]]), tmp_path)
+    h.process.script(["vendor/bin/pint", "--dirty"], exit_code=1, stderr="syntax error")
+    run = to_verifying(h)
+    worktree = run.worktree_path
+    formatted = iter(["p" * 40, "q" * 40])  # each failing run of the formatter rewrites files first
+    h.process.on_run = lambda call: h.git.working_trees.__setitem__(worktree, next(formatted)) if call["argv"][0] == "vendor/bin/pint" else None
+    run = step(h.deps, run)
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    h.git.clean[worktree] = False
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", worktree, "e" * 40) in h.git.calls
+    assert [call[3] for call in h.git.calls if call[0] == "write_patch"] == ["q" * 40]
+
+
+def test_a_discarded_fix_is_recorded_before_preparation_can_fail_and_a_later_discard_never_overwrites_it(settings, tmp_path):
+    from review_loop.cli.render import render_show
+
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = run.extra["loop_tree"]
+    move_branch(h)
+    h.git.diff_text = "first discarded fix\n"
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != ("bash", ".claude/worktree-setup.sh")]
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stderr="composer: not found")
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    failed = step(h.deps, resumed)
+
+    assert failed.state == RunState.PAUSED and failed.pause_reason == PauseReason.PREPARE_FAILED
+    persisted = runs_repo.get_run(h.conn, run.id)
+    first = persisted.extra["discarded_fix_patches"]
+    assert len(first) == 1 and Path(first[0]).read_text() == "first discarded fix\n"
+    assert f"discarded unverified fix: {first[0]}" in render_show(persisted, findings=[])
+    # A later discard, modelled by preparing again over the loop's tree once the prepare command works.
+    h.git.diff_text = "second discarded fix\n"
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != ("bash", ".claude/worktree-setup.sh")]
+    h.process.script(["bash", ".claude/worktree-setup.sh"])
+    resumed = run_control.resume(h.conn, persisted, FakeClock(), head_moved=False).value
+
+    run = step(h.deps, resumed)
+
+    patches = run.extra["discarded_fix_patches"]
+    assert run.state == RunState.REVIEWING and len(patches) == 2 and patches[0] == first[0] and patches[1] != first[0]
+    assert Path(patches[0]).read_text() == "first discarded fix\n" and Path(patches[1]).read_text() == "second discarded fix\n"
+
+
+# --- after a move, the head is reviewed before a stale review's findings are acted on --------------------------------------
+
+def test_a_posted_review_of_an_earlier_commit_is_not_acted_on_before_the_new_head_is_reviewed(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    h.github.on_call = lambda name: (run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+                                     if name == "post_review" else None)  # lands while the post is in flight
+    paused = step(h.deps, run)
+    assert (paused.state, paused.pause_reason) == (RunState.PAUSED, PauseReason.MANUAL)
+    assert paused.extra["pending_review_pass"] == 1 and len([w for w in h.github.writes if w[0] == "post_review"]) == 1
+    h.github.on_call = None
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+    run = step(h.deps, resumed)
+    assert run.state == RunState.REVIEWING
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.REREVIEWING, "the posted review of the earlier commit goes to a review of the head, not to assessment"
+    assert h.author.requests == [] and h.git.pushes == []
+    h.reviewer.reply({**APPROVE, "verdict": "REQUEST_CHANGES"})
+    run = step(h.deps, run)
+    assert run.state == RunState.ASSESSING and len(h.reviewer.requests) == 2 and "e" * 40 in h.reviewer.requests[-1].prompt
+    assert h.author.requests == [] and h.git.pushes == []
+    assert len([w for w in h.github.writes if w[0] == "post_review"]) == 2, "the review of the earlier commit stays as posted"
+
+
+# --- the loop acts only on the tree it left: an edit made meanwhile pauses the run and is kept ------------------------------
+
+def test_preparation_records_the_tree_it_leaves_as_the_loops_own(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    worktree = str(settings.repositories["webapp"].worktree_root / "webapp-1004")
+    h.git.working_trees[worktree] = "p" * 40  # what the worktree holds once the prepare commands have run
+
+    run = step(h.deps, h.run)
+
+    assert run.state == RunState.REVIEWING and run.extra["loop_tree"] == "p" * 40
+
+
+def test_an_edit_made_while_a_run_was_paused_is_never_adopted_by_its_next_verification(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    snapshot = run.extra["loop_tree"]
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = "x" * 40  # a person edits the paused run's worktree
+    calls_before, processes_before = len(h.git.calls), len(h.process.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=False).value
+    assert resumed.state == RunState.VERIFYING
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.WORKSPACE_DIRTY) and run.extra["loop_tree"] == snapshot
+    assert not [call for call in h.git.calls[calls_before:] if call[0] == "stage_all"] and len(h.process.calls) == processes_before
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.WORKSPACE_DIRTY), "recovery keeps the edit"
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("write_patch", "reset_hard")]
+
+
+def test_an_edit_made_before_a_repair_fix_is_never_adopted_by_the_repair(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout=FAILING)
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.FIXING, "the repair is owed"
+    snapshot = run.extra["loop_tree"]
+    h.git.working_trees[run.worktree_path] = "x" * 40  # a person edits the worktree before the repair runs
+    h.author.reply(FIX)
+    fix_requests = len([r for r in h.author.requests if r.phase == "fix"])
+
+    run = step(h.deps, run)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.WORKSPACE_DIRTY) and run.extra["loop_tree"] == snapshot
+    assert len([r for r in h.author.requests if r.phase == "fix"]) == fix_requests
+
+
+def test_a_commit_made_in_a_paused_runs_worktree_is_kept_when_the_branch_moves(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    worktree = run.worktree_path
+    h.git.heads[worktree] = "u" * 40  # a person commits their own change in the paused run's worktree
+    h.git.working_trees[worktree] = "x" * 40
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("reset_hard", "write_patch", "stage_all")]
+    assert h.git.heads[worktree] == "u" * 40 and "discarded_fix_patches" not in run.extra
+
+
+def test_a_foreign_commit_in_a_run_paused_without_a_snapshot_is_kept_when_the_branch_moves(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    worktree = run.worktree_path
+    h.git.working_changed = []
+    h.git.heads[worktree] = "9" * 40  # a commit the loop did not make
+    h.git.commit_infos["9" * 40] = ("0" * 40, "someone else's commit")
+    run = step(h.deps, run)
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    run.extra.pop("loop_tree")  # paused before the loop recorded a snapshot
+    runs_repo.save_run(h.conn, run)
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("reset_hard", "write_patch", "stage_all")]
+    assert h.git.heads[worktree] == "9" * 40
+
+
+def test_a_run_without_a_snapshot_whose_worktree_is_at_its_own_head_is_still_reset_when_the_branch_moves(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)  # the worktree is clean at the head the run prepared, a
+    run = run_control.pause(h.conn, run, PauseReason.HEAD_CHANGED, FakeClock())
+    run.extra.pop("loop_tree")  # paused before the loop recorded a snapshot
+    runs_repo.save_run(h.conn, run)
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", run.worktree_path, "e" * 40) in h.git.calls

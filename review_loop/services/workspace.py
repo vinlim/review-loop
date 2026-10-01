@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Callable, Collection
 
 from review_loop.config.settings import RepositoryConfig
 from review_loop.engine.env import sanitize_env
@@ -19,6 +20,7 @@ GH_SHIM = "#!/bin/sh\necho 'gh is not available to agents; the review-loop coord
 class WorkspaceProblem(StrEnum):
     DIRTY = "dirty"
     FOREIGN = "foreign"
+    UNEXPECTED_COMMIT = "unexpected_commit"
     PREPARE_FAILED = "prepare_failed"
 
 
@@ -27,6 +29,7 @@ class WorkspaceReady:
     path: str
     local_branch: str
     env: dict[str, str]
+    discarded_patch: str = ""  # where the loop's own unverified fix went, when preparation had to discard one
 
 
 def workspace_path(repo: RepositoryConfig, pr_number: int) -> str:
@@ -39,15 +42,33 @@ def local_branch(pr_number: int) -> str:
 
 def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, process: ProcessRunner, state_dir: Path,
                       base_env: dict[str, str], changed_paths: list[str], timeout_seconds: int = 1800,
-                      log_path: Path | None = None) -> Result[WorkspaceReady, WorkspaceProblem]:
+                      log_path: Path | None = None, loop_tree: str = "", discarded_patch_path: Path | None = None,
+                      on_discard: Callable[[str], None] | None = None,
+                      own_heads: Collection[str] = ()) -> Result[WorkspaceReady, WorkspaceProblem]:
+    """`loop_tree` is the tree the loop last left in the worktree. A dirty worktree holding exactly that tree is the loop's
+    own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses. A clean
+    worktree at a commit other than the adopted head is reset only when that commit is one of `own_heads`, the commits the
+    run recorded, or its tree is `loop_tree`; otherwise someone committed there, and it pauses.
+    `on_discard` records the patch before the worktree is reset or any prepare command runs, so a failure after it
+    cannot lose the receipt."""
     path = workspace_path(repo, run.pr_number)
     branch = local_branch(run.pr_number)
+    discarded = ""
     git.fetch(str(repo.local_path), "origin", [run.base_ref, run.head_ref])
     if git.worktree_exists(path):
         if git.current_branch(path) != branch:
             return Err(WorkspaceProblem.FOREIGN)
         if not git.is_clean(path):
-            return Err(WorkspaceProblem.DIRTY)
+            if not loop_tree or discarded_patch_path is None or git.working_tree_hash(path) != loop_tree:
+                return Err(WorkspaceProblem.DIRTY)
+            discarded_patch_path.parent.mkdir(parents=True, exist_ok=True)
+            git.write_patch(path, git.head_sha(path), loop_tree, str(discarded_patch_path))
+            if on_discard is not None:
+                on_discard(str(discarded_patch_path))
+            git.stage_all_and_tree_hash(path)  # staged, the fix's new files are removed by the reset as well
+            discarded = str(discarded_patch_path)
+        elif git.head_sha(path) != run.head_sha and not _owned_commit(git, path, own_heads, loop_tree):
+            return Err(WorkspaceProblem.UNEXPECTED_COMMIT)
         git.reset_hard(path, run.head_sha)
     else:
         git.worktree_add(str(repo.local_path), path, branch, run.head_sha)
@@ -58,7 +79,11 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
         log_path.write_text(log)
     if not prepared:
         return Err(WorkspaceProblem.PREPARE_FAILED)
-    return Ok(WorkspaceReady(path=path, local_branch=branch, env=env))
+    return Ok(WorkspaceReady(path=path, local_branch=branch, env=env, discarded_patch=discarded))
+
+
+def _owned_commit(git: GitClient, path: str, own_heads: Collection[str], loop_tree: str) -> bool:
+    return git.head_sha(path) in own_heads or (bool(loop_tree) and git.working_tree_hash(path) == loop_tree)
 
 
 def _run_prepare(commands: list[list[str]], process: ProcessRunner, cwd: str, env: dict[str, str], timeout_seconds: int) -> tuple[bool, str]:

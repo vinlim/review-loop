@@ -173,7 +173,7 @@ def test_doctor_probes_each_configured_agent_with_the_model_and_effort_a_phase_w
 
     checks = {check.name: check for check in run_doctor(make(), settings, SCHEMAS, probing=ready)}
 
-    assert checks["agent codex gpt-5.6-sol xhigh"].ok and checks["agent claude claude-opus-5-5 xhigh"].ok
+    assert checks["agent codex gpt-6.1-sol xhigh"].ok and checks["agent claude claude-opus-5-5 xhigh"].ok
     assert ready.agents["claude"].requests[0].effort == "xhigh"
 
 

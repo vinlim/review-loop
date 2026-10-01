@@ -78,7 +78,13 @@ confirm, a GitHub error, an agent that returns nothing usable, an agent that cha
 during a read-only phase (`read_only_violated`; the change is left in place for you to inspect or
 discard), or a crash of the coordinator itself. `resume` continues from the paused phase; after a
 moved head it goes back through preparation, unless git shows the branch still where the run left it,
-in which case the pause was the API lagging a push and the run continues where it paused. A push the
+in which case the pause was the API lagging a push and the run continues where it paused. Whatever
+the pause reason, a resume after someone else moved the PR branch prepares again on the new head;
+when the worktree holds exactly the loop's own unverified fix, preparation keeps it as a patch under
+the run directory, discards it, and the fix is redone on the new head. So a check that fails on the
+base branch is cleared by fixing the base, bringing that fix into the PR branch, and resuming. For a
+paused `checks_failed` run, `show` prints the failing lines of the verification log and the author's
+report from the fix it checked. A push the
 run made is recognised from git on resume even when a pause or a crash kept it from being recorded. `stop` and
 `pause` from another terminal take effect before the running loop's next phase: the phase already
 running finishes first, `status` says `(coordinator still finishing its phase)` until it does, and a
@@ -108,7 +114,7 @@ unset to use that agent's own default.
 [repositories.webapp.review]
 reviewer = "codex"                       # claude, codex, agy or opencode
 author = "claude"
-# reviewer_model = "gpt-5.6-sol"
+# reviewer_model = "gpt-6.1-sol"
 # reviewer_effort = "xhigh"
 # author_model = "anthropic/claude-opus-5-5"   # opencode takes provider/model
 # author_effort = "xhigh"

@@ -20,6 +20,7 @@ class FakeGit:
         self.on_push = None
         self.branches: dict[str, str] = {}
         self.tree_hashes: list[str] = []
+        self.working_trees: dict[str, str] = {}
         self.calls: list[tuple] = []
         self.log = log if log is not None else []
 
@@ -64,6 +65,11 @@ class FakeGit:
         self._record("diff", repo_path, base, head)
         return self.diff_text
 
+    def write_patch(self, path: str, base: str, tree: str, destination: str) -> None:
+        self._record("write_patch", path, base, tree, destination)
+        with open(destination, "w") as patch:
+            patch.write(self.diff_text)
+
     def log_between(self, repo_path: str, base: str, head: str) -> list[str]:
         self._record("log_between", repo_path, base, head)
         return list(self.log_lines)
@@ -79,11 +85,16 @@ class FakeGit:
     def working_changed_files(self, path: str) -> list[str]:
         return list(self.working_changed)
 
+    def working_tree_hash(self, path: str) -> str:
+        self._record("working_tree_hash", path)
+        return self.working_trees.get(path, "t" * 40)
+
     def stage_all_and_tree_hash(self, path: str) -> str:
+        """The same tree `working_tree_hash` reports, as in git, unless a test scripts what staging sees."""
         self._record("stage_all", path)
         if self.tree_hashes:
             return self.tree_hashes.pop(0)
-        return "t" * 40
+        return self.working_trees.get(path, "t" * 40)
 
     def commit_tree(self, path: str, sha: str) -> str:
         return "t" * 40

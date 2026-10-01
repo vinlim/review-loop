@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from review_loop.engine.check_excerpt import failure_excerpt
 from review_loop.engine.findings import FindingState
 from review_loop.engine.packet import PacketInput, render_packet
 from review_loop.engine.prompts import fill_template
@@ -32,6 +33,8 @@ def phase_fix(deps: Deps, run: Run) -> Run:
     repairing = bool(run.extra.get(f"verify_failure_pass_{run.pass_no}"))
     if not repairing and not deps.git.is_clean(run.worktree_path):
         return pause(deps, run, PauseReason.WORKSPACE_DIRTY)
+    if repairing and _foreign_tree(deps, run):
+        return pause(deps, run, PauseReason.WORKSPACE_DIRTY)
     accepted = [f for f in findings_repo.list_findings(deps.conn, run.id) if f.state == FindingState.ACCEPTED]
     prompt = _fix_prompt(deps, run, repo_config, directory, accepted)
     attempt = phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) + 1
@@ -42,6 +45,7 @@ def phase_fix(deps: Deps, run: Run) -> Run:
         return pause(deps, run, outcome.error)
     keep_author_session(run, repo_config, outcome.value.session_id)
     _record_fix_output(deps, run, outcome.value.data, accepted)
+    run.extra["loop_tree"] = deps.git.working_tree_hash(run.worktree_path)  # what preparation may discard as the loop's own
     return save(deps, run, RunState.VERIFYING)
 
 
@@ -85,9 +89,18 @@ def _record_fix_output(deps: Deps, run: Run, fix: dict, accepted) -> None:
     run.extra[f"drift_pass_{run.pass_no}"] = scope_drift(deps.git.working_changed_files(run.worktree_path), [f.file for f in accepted], declared)
 
 
+def _foreign_tree(deps: Deps, run: Run) -> bool:
+    """Whether the worktree holds something other than the tree the loop last left: an edit made while the run was
+    paused or between phases. Without a snapshot there is nothing to compare, and the phase runs as it always has."""
+    expected = run.extra.get("loop_tree")
+    return bool(expected) and deps.git.working_tree_hash(run.worktree_path) != expected
+
+
 def phase_verify(deps: Deps, run: Run) -> Run:
     repo_config = repo(deps, run)
     directory = pass_dir(deps, run, run.pass_no)
+    if _foreign_tree(deps, run):  # before formatting or staging: a failed check would otherwise adopt the edit
+        return pause(deps, run, PauseReason.WORKSPACE_DIRTY, resume_state=RunState.VERIFYING)
     touched_scripts = set(deps.git.working_changed_files(run.worktree_path)) & registered_script_files(repo_config)
     if touched_scripts:
         run.extra["scripts_changed"] = sorted(touched_scripts)
@@ -97,6 +110,12 @@ def phase_verify(deps: Deps, run: Run) -> Run:
     log_path = directory / f"verify-{attempt_no}.log"
     log_path.write_text(checks.log)
     verification_repo.add_result(deps.conn, run.id, run.pass_no, attempt_no, checks.tree, checks.commands, checks.status, str(log_path), now(deps))
+    if checks.tree and checks.status != "tree_changed":  # a tree changed under the checks holds an edit that is not the loop's
+        run.extra["loop_tree"] = checks.tree  # the formatter may have changed the tree since the fix
+    if checks.status in ("failed", "unavailable"):
+        run.extra["checks_failure"] = {"log": str(log_path), "excerpt": failure_excerpt(checks.blocks)}
+    else:
+        run.extra.pop("checks_failure", None)
     if checks.status == "tree_changed":
         return pause(deps, run, PauseReason.UNEXPECTED_COMMIT, resume_state=RunState.VERIFYING)
     if checks.status == "unavailable":
@@ -170,6 +189,7 @@ class CheckOutcome:
     log: str
     tree: str
     commands: list[list[str]]
+    blocks: list[tuple[str, str]] = field(default_factory=list)  # each command's status and log block, in order
 
 
 def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> CheckOutcome:
@@ -178,33 +198,34 @@ def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> Check
     check that selected nothing hands over to the fallback, whose result then stands in its place."""
     verification = repo_config.verification
     timeout = repo_config.review.timeouts_minutes.get("verify", 60) * 60
-    log_parts: list[str] = []
+    blocks: list[tuple[str, str]] = []
     ran: list[list[str]] = []
     for command in verification.format:
         ran.append(command)
-        if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), verification, log_parts) != "passed":
-            return CheckOutcome("failed", "\n".join(log_parts), "", ran)
+        if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), verification, blocks) != "passed":
+            # A formatter can rewrite files before it fails; what it left is still the loop's own tree.
+            return CheckOutcome("failed", _log(blocks), deps.git.working_tree_hash(run.worktree_path), ran, blocks)
     tree_before = deps.git.stage_all_and_tree_hash(run.worktree_path)
-    statuses = _run_required(deps, run, verification.required, verification, env, timeout, log_parts, ran)
+    statuses = _run_required(deps, run, verification.required, verification, env, timeout, blocks, ran)
     if _selected_nothing(statuses) and verification.fallback:
-        statuses = _run_required(deps, run, verification.fallback, verification, env, timeout, log_parts, ran)
+        statuses = _run_required(deps, run, verification.fallback, verification, env, timeout, blocks, ran)
     tree_after = deps.git.stage_all_and_tree_hash(run.worktree_path)
-    log = "\n".join(log_parts)
+    log = _log(blocks)
     if tree_after != tree_before:
-        return CheckOutcome("tree_changed", log + "\nthe working tree changed while the checks ran", tree_after, ran)
+        return CheckOutcome("tree_changed", log + "\nthe working tree changed while the checks ran", tree_after, ran, blocks)
     if "failed" in statuses:
-        return CheckOutcome("failed", log, tree_after, ran)
+        return CheckOutcome("failed", log, tree_after, ran, blocks)
     if not statuses or any(status != "passed" for status in statuses):
-        return CheckOutcome("unavailable", log or "no required checks are registered for this repository", tree_after, ran)
+        return CheckOutcome("unavailable", log or "no required checks are registered for this repository", tree_after, ran, blocks)
     run.extra["verified_tree"] = tree_after
-    return CheckOutcome("passed", log, tree_after, ran)
+    return CheckOutcome("passed", log, tree_after, ran, blocks)
 
 
 def _run_required(deps: Deps, run: Run, commands: list[list[str]], verification, env: dict[str, str], timeout: int,
-                  log_parts: list[str], ran: list[list[str]]) -> list[str]:
+                  blocks: list[tuple[str, str]], ran: list[list[str]]) -> list[str]:
     ran.extend(commands)
     return [_outcome(deps.process.run(command, cwd=run.worktree_path, env=pytest_check_env(command, run.worktree_path, env),
-                                      timeout_seconds=timeout), verification, log_parts)
+                                      timeout_seconds=timeout), verification, blocks)
             for command in commands]
 
 
@@ -213,8 +234,13 @@ def _selected_nothing(statuses: list[str]) -> bool:
     return "nothing_selected" in statuses and all(status in ("passed", "nothing_selected") for status in statuses)
 
 
-def _outcome(completed, verification, log_parts: list[str]) -> str:
-    log_parts.append(f"$ {' '.join(completed.argv)}\nexit {completed.exit_code}{' (timed out)' if completed.timed_out else ''}\n{completed.stdout}\n{completed.stderr}")
+def _outcome(completed, verification, blocks: list[tuple[str, str]]) -> str:
+    status = _status(completed, verification)
+    blocks.append((status, f"$ {' '.join(completed.argv)}\nexit {completed.exit_code}{' (timed out)' if completed.timed_out else ''}\n{completed.stdout}\n{completed.stderr}"))
+    return status
+
+
+def _status(completed, verification) -> str:
     if completed.timed_out:
         return "unavailable"
     if completed.exit_code == 0:
@@ -222,6 +248,10 @@ def _outcome(completed, verification, log_parts: list[str]) -> str:
     if completed.exit_code in verification.unavailable_exit_codes:
         return "nothing_selected"
     return "failed"
+
+
+def _log(blocks: list[tuple[str, str]]) -> str:
+    return "\n".join(text for _, text in blocks)
 
 
 def _commit_if_needed(deps: Deps, run: Run, repo_config) -> Result[str | None, PauseReason]:

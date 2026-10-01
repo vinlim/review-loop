@@ -52,6 +52,11 @@ class GitCli:
     def diff(self, repo_path: str, base: str, head: str) -> str:
         return self._git(repo_path, "diff", f"{base}..{head}") + "\n"
 
+    def write_patch(self, path: str, base: str, tree: str, destination: str) -> None:
+        """Written by git itself, so nothing strips a trailing blank context line or rewrites line endings."""
+        self._git_raw(path, "diff", "--no-color", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+                      "--src-prefix=a/", "--dst-prefix=b/", f"--output={Path(destination).resolve()}", base, tree, "--")
+
     def log_between(self, repo_path: str, base: str, head: str) -> list[str]:
         lines = self._git(repo_path, "log", "--format=%H %s", f"{base}..{head}").splitlines()
         return [f"{line[:9]} {line[41:]}" for line in lines]
@@ -82,6 +87,23 @@ class GitCli:
         tracked = self._git_raw(path, "diff", "--name-only", "-z", "--no-renames", "HEAD", "--")
         untracked = self._git_raw(path, "ls-files", "--others", "--exclude-standard", "-z", "--")
         return _names(tracked + untracked)
+
+    def working_tree_hash(self, path: str) -> str:
+        """`add -A` and `write-tree` against a copy of the index, so a worktree that is not ours keeps its staging as found."""
+        import shutil
+        import tempfile
+
+        index = Path(path) / self._git(path, "rev-parse", "--git-path", "index")
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "index"
+            if index.exists():
+                shutil.copyfile(index, copy)
+            env = {**self.env, "GIT_INDEX_FILE": str(copy)}
+            for args in (("add", "-A"), ("write-tree",)):
+                completed = self.process.run(["git", *args], cwd=path, env=env, timeout_seconds=self.timeout_seconds)
+                if completed.exit_code != 0:
+                    raise RuntimeError(f"git {' '.join(args)} in {path} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
+            return completed.stdout.strip()
 
     def stage_all_and_tree_hash(self, path: str) -> str:
         self._git(path, "add", "-A")

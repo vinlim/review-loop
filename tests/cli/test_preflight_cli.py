@@ -53,7 +53,7 @@ def test_resume_probes_again_and_keeps_the_run_paused_while_an_agent_is_still_un
 
     run = runs_repo.get_run(box.conn, run_id)
     assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.AGENT_UNAVAILABLE and run.resume_state == RunState.PREPARING
-    assert run.extra["preflight_failure"].startswith("reviewer codex cannot serve gpt-5.6-sol at xhigh: ")
+    assert run.extra["preflight_failure"].startswith("reviewer codex cannot serve gpt-6.1-sol at xhigh: ")
     assert box.spawn.calls == [] and f"run {run_id}: paused (agent_unavailable)" in capsys.readouterr().out
 
 

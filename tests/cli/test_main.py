@@ -261,3 +261,37 @@ def test_resume_after_a_head_changed_pause_goes_back_through_preparation_when_gi
     assert main(["resume", run.id, "--no-run"], container=box) == 0
 
     assert f"resumed {run.id} at preparing" in capsys.readouterr().out
+
+
+def test_resume_after_checks_failed_goes_back_through_preparation_once_the_branch_moved(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.VERIFYING
+    runs_repo.save_run(box.conn, run)
+    run_control.pause(box.conn, run, PauseReason.CHECKS_FAILED, box.clock)
+    box.git.remote_heads[run.head_ref] = "e" * 40  # the base fix was merged into the PR branch
+    capsys.readouterr()
+
+    assert main(["resume", run.id, "--no-run"], container=box) == 0
+
+    assert f"resumed {run.id} at preparing" in capsys.readouterr().out
+
+
+def test_resume_never_counts_the_runs_own_unrecorded_push_as_a_move(settings, capsys):
+    from review_loop.types.run import RunState
+
+    box = container(settings)
+    main(["start", URL, "--no-run"], container=box)
+    run = runs_repo.list_runs(box.conn)[0]
+    run.state = RunState.VERIFYING
+    run.extra[f"candidate_commit_pass_{run.pass_no}"] = "c" * 40
+    runs_repo.save_run(box.conn, run)
+    box.git.remote_heads[run.head_ref] = "c" * 40  # pushed, then the coordinator died before recording it
+    capsys.readouterr()
+
+    assert main(["resume", run.id, "--no-run"], container=box) == 0
+
+    assert f"resumed {run.id} at verifying" in capsys.readouterr().out

@@ -232,6 +232,46 @@ def test_a_head_changed_pause_resumes_where_it_paused_when_the_head_is_known_not
     conn, run = make(RunState.PUBLISHING)
     pause(conn, run, PauseReason.HEAD_CHANGED, FakeClock())
 
-    resumed = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_unchanged=True).value
+    resumed = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=False).value
 
     assert resumed.state == RunState.PUBLISHING
+
+
+def test_any_pause_resumes_through_preparation_when_someone_else_moved_the_branch():
+    conn, run = make(RunState.VERIFYING)
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    moved = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=True).value
+
+    assert moved.state == RunState.PREPARING
+
+
+def test_a_pause_resumes_where_it_stopped_when_the_branch_did_not_move():
+    conn, run = make(RunState.VERIFYING)
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    assert resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=False).value.state == RunState.VERIFYING
+
+
+def test_an_unattended_run_resumes_through_preparation_when_someone_else_moved_the_branch():
+    conn, run = make(RunState.FIXING)
+
+    assert resume(conn, run, FakeClock(), unattended=True, head_moved=True).value.state == RunState.PREPARING
+
+
+def test_a_checks_failed_pause_without_a_loop_tree_takes_it_only_from_a_failed_verification_of_its_own_pass():
+    from review_loop.repositories import verification as verification_repo
+
+    def paused_after(pass_no, status, tree):
+        conn, run = make(RunState.VERIFYING)
+        run.pass_no = 2
+        runs_repo.save_run(conn, run)
+        verification_repo.add_result(conn, run.id, pass_no, 1, tree, [], status, "", "t")
+        pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+        return resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=True).value.extra.get("loop_tree")
+
+    assert paused_after(2, "failed", "f" * 40) == "f" * 40
+    assert paused_after(2, "unavailable", "f" * 40) == "f" * 40
+    assert paused_after(1, "failed", "f" * 40) is None, "an earlier pass's tree is not the one the loop left"
+    assert paused_after(2, "tree_changed", "f" * 40) is None, "a tree changed under the checks is not the loop's"
+    assert paused_after(2, "failed", "") is None
