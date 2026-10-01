@@ -93,7 +93,7 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
         return pause(deps, run, reason)
     run.extra["prepare_log"] = str(log_path)
     run.extra.pop("prepare_failure", None)
-    run.extra.pop("loop_tree", None)  # the worktree now holds the adopted head and nothing of the loop's
+    run.extra["loop_tree"] = deps.git.working_tree_hash(ready.value.path)  # the prepared tree is the loop's own
     run.worktree_path, run.local_branch = ready.value.path, ready.value.local_branch
     if run.author_session in ("", "auto"):
         run.author_session = deps.find_author_session(repo_config.review.author, run.head_ref, str(repo_config.local_path))
@@ -382,9 +382,10 @@ def _after_review(deps: Deps, run: Run) -> Run:
     run.extra[f"head_pass_{run.pass_no}"] = run.head_sha
     decision = decide_after_review(findings, run.pass_no, run.budgets.max_review_passes,
                                    head_verified=run.extra.get("verified_head") == run.head_sha)
-    if decision.next in ("verify", "complete") and run.extra.get("last_reviewed_sha") != run.head_sha:
+    if decision.next in ("assess", "align", "verify", "complete") and run.extra.get("last_reviewed_sha") != run.head_sha:
         # The branch moved after this review was posted, so it inspected an earlier commit than the head. The head is
-        # reviewed before anything is verified or completed, within the pass budget.
+        # reviewed before anything is assessed, fixed, verified or completed, within the pass budget; assess and align
+        # come only below the budget, so the exhausted branch is reached from verify or complete alone.
         if run.pass_no < run.budgets.max_review_passes:
             return save(deps, run, RunState.REREVIEWING)
         return complete_run(deps, run, Outcome.COMPLETE_WITH_EXCEPTIONS, exhausted=True)

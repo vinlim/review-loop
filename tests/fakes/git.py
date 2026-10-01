@@ -87,13 +87,14 @@ class FakeGit:
 
     def working_tree_hash(self, path: str) -> str:
         self._record("working_tree_hash", path)
-        return self.working_trees.get(path, "w" * 40)
+        return self.working_trees.get(path, "t" * 40)
 
     def stage_all_and_tree_hash(self, path: str) -> str:
+        """The same tree `working_tree_hash` reports, as in git, unless a test scripts what staging sees."""
         self._record("stage_all", path)
         if self.tree_hashes:
             return self.tree_hashes.pop(0)
-        return "t" * 40
+        return self.working_trees.get(path, "t" * 40)
 
     def commit_tree(self, path: str, sha: str) -> str:
         return "t" * 40

@@ -33,6 +33,8 @@ def phase_fix(deps: Deps, run: Run) -> Run:
     repairing = bool(run.extra.get(f"verify_failure_pass_{run.pass_no}"))
     if not repairing and not deps.git.is_clean(run.worktree_path):
         return pause(deps, run, PauseReason.WORKSPACE_DIRTY)
+    if repairing and _foreign_tree(deps, run):
+        return pause(deps, run, PauseReason.WORKSPACE_DIRTY)
     accepted = [f for f in findings_repo.list_findings(deps.conn, run.id) if f.state == FindingState.ACCEPTED]
     prompt = _fix_prompt(deps, run, repo_config, directory, accepted)
     attempt = phases_repo.count_attempts(deps.conn, run.id, "fix", run.pass_no) + 1
@@ -87,9 +89,18 @@ def _record_fix_output(deps: Deps, run: Run, fix: dict, accepted) -> None:
     run.extra[f"drift_pass_{run.pass_no}"] = scope_drift(deps.git.working_changed_files(run.worktree_path), [f.file for f in accepted], declared)
 
 
+def _foreign_tree(deps: Deps, run: Run) -> bool:
+    """Whether the worktree holds something other than the tree the loop last left: an edit made while the run was
+    paused or between phases. Without a snapshot there is nothing to compare, and the phase runs as it always has."""
+    expected = run.extra.get("loop_tree")
+    return bool(expected) and deps.git.working_tree_hash(run.worktree_path) != expected
+
+
 def phase_verify(deps: Deps, run: Run) -> Run:
     repo_config = repo(deps, run)
     directory = pass_dir(deps, run, run.pass_no)
+    if _foreign_tree(deps, run):  # before formatting or staging: a failed check would otherwise adopt the edit
+        return pause(deps, run, PauseReason.WORKSPACE_DIRTY, resume_state=RunState.VERIFYING)
     touched_scripts = set(deps.git.working_changed_files(run.worktree_path)) & registered_script_files(repo_config)
     if touched_scripts:
         run.extra["scripts_changed"] = sorted(touched_scripts)
