@@ -28,7 +28,7 @@ from review_loop.services.workspace import registered_script_files
 from review_loop.repositories import runs as runs_repo
 from review_loop.services.workspace import WorkspaceProblem, prepare_workspace
 from review_loop.types.findings import Finding
-from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
+from review_loop.types.run import WORKING_STATES, Outcome, PauseReason, Run, RunState
 
 RESOLUTION_EVENTS = {"verified": ("verify",), "withdrawn": ("withdraw",), "rejection_accepted": ("accept_rejection",),
                      "disputed": ("dispute",)}
@@ -37,6 +37,7 @@ OMISSION_EVENTS = {FindingState.FIXED_PENDING_VERIFICATION: ("verify",), Finding
 DISPOSITION_EVENTS = {"accept": "accept", "reject": "reject", "needs_alignment": "needs_alignment", "answer": "answer"}
 STOPPED = frozenset(RunState) - WORKING_STATES
 MUTATING = {RunState.FIXING, RunState.VERIFYING}
+PENDING_REVIEW_KEYS = ("pending_review_pass", "pending_review_path", "pending_review_ids", "pending_review_diff", "pending_review_since")
 
 
 def run_loop(deps: Deps, run: Run, on_step=None) -> Run:
@@ -81,10 +82,9 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
         run.extra["scripts_changed"] = sorted(set(changed) & registered_script_files(repo_config))
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED)
     log_path = _prepare_log_path(deps, run)
-    patches = run.extra.get("discarded_fix_patches", [])
     ready = prepare_workspace(run, repo_config, git=deps.git, process=deps.process, state_dir=deps.settings.state_dir,
                               base_env=deps.base_env, changed_paths=changed, log_path=log_path, loop_tree=run.extra.get("loop_tree", ""),
-                              discarded_patch_path=deps.runs_dir / run.id / f"discarded-fix-{len(patches) + 1}.patch")
+                              discarded_patch_path=_discarded_patch_path(deps, run), on_discard=lambda path: _record_discarded(deps, run, path))
     if not ready.ok:
         if ready.error == WorkspaceProblem.PREPARE_FAILED:
             run.extra["prepare_log"], run.extra["prepare_failure"] = str(log_path), log_path.read_text()[-4000:]
@@ -94,13 +94,27 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     run.extra["prepare_log"] = str(log_path)
     run.extra.pop("prepare_failure", None)
     run.extra.pop("loop_tree", None)  # the worktree now holds the adopted head and nothing of the loop's
-    if ready.value.discarded_patch:
-        run.extra["discarded_fix_patches"] = patches + [ready.value.discarded_patch]
     run.worktree_path, run.local_branch = ready.value.path, ready.value.local_branch
     if run.author_session in ("", "auto"):
         run.author_session = deps.find_author_session(repo_config.review.author, run.head_ref, str(repo_config.local_path))
         run.extra["author_session_agent"] = repo_config.review.author
     return save(deps, run, RunState.REVIEWING)
+
+
+def _discarded_patch_path(deps: Deps, run: Run) -> Path:
+    """A name no patch on disk holds, so a discard never overwrites an earlier one, even one whose receipt was lost."""
+    directory = deps.runs_dir / run.id
+    number = 1
+    while (directory / f"discarded-fix-{number}.patch").exists():
+        number += 1
+    return directory / f"discarded-fix-{number}.patch"
+
+
+def _record_discarded(deps: Deps, run: Run, path: str) -> None:
+    """Written as progress before the worktree is reset, so a prepare command that fails afterwards cannot lose it."""
+    run.extra["discarded_fix_patches"] = run.extra.get("discarded_fix_patches", []) + [path]
+    run.updated_at = now(deps)
+    runs_repo.save_run_keeping_control(deps.conn, run)
 
 
 def _prepare_log_path(deps: Deps, run: Run) -> Path:
@@ -118,7 +132,9 @@ def phase_review(deps: Deps, run: Run) -> Run:
     if pull.state != "open":
         return finish(deps, run, RunState.CANCELLED)
     if run.extra.get("pending_review_pass") == run.pass_no:
-        return _publish_pending_review(deps, run)
+        if run.extra.get("last_reviewed_sha") == run.head_sha or _pending_review_posted(deps, run):
+            return _publish_pending_review(deps, run)
+        _supersede_pending_review(deps, run)
     pass_no = run.pass_no + 1
     directory = pass_dir(deps, run, pass_no)
     findings = findings_repo.list_findings(deps.conn, run.id)
@@ -152,6 +168,7 @@ def _persist_review(deps: Deps, run: Run, review: dict, findings: list[Finding],
     findings_repo.delete_pass(deps.conn, run.id, pass_no)
     ids = _store_new_findings(deps, run, review, findings)
     _apply_resolved_prior(deps, run, review, findings)
+    run.extra["pending_review_since"] = run.extra.get("last_reviewed_sha", run.merge_base_sha)
     run.extra["last_reviewed_sha"] = run.head_sha
     run.extra[f"verdict_pass_{pass_no}"] = review["verdict"]
     stored = pass_dir(deps, run, pass_no) / "review-output.json"
@@ -182,9 +199,43 @@ def _publish_pending_review(deps: Deps, run: Run) -> Run:
         return landed.run
     (directory / "review.md").write_text(render_review_body(review, list(zip(ids, review["findings"])),
                                                             make_marker(Role.REVIEWER, run.id, run.pass_no, "review")))
-    for key in ("pending_review_pass", "pending_review_path", "pending_review_ids", "pending_review_diff"):
+    for key in PENDING_REVIEW_KEYS:
         run.extra.pop(key, None)
     return _after_review(deps, run)
+
+
+def _pending_review_posted(deps: Deps, run: Run) -> bool:
+    """Whether the pending review reached the PR. Then it is a review of the commit it inspected, and only its
+    bookkeeping is left; the head it never saw is reviewed next (see _after_review)."""
+    if inspect_only(deps, run) or not repo(deps, run).publication.post_reviews:
+        return False
+    publisher(deps, run).reconcile(run.id, ref(run))
+    return outbox_repo.has_done(deps.conn, run.id, make_marker(Role.REVIEWER, run.id, run.pass_no, "review"))
+
+
+def _supersede_pending_review(deps: Deps, run: Run) -> None:
+    """A review left pending on a commit the branch has since moved from, and never posted: its files are kept under a
+    superseded name, its findings are removed, and the same pass is reviewed again on the current head. Resolutions
+    it recorded for earlier passes' findings stand."""
+    pass_no = run.pass_no
+    stale = deps.runs_dir / run.id / f"pass-{pass_no}"
+    if stale.exists():
+        number = 1
+        while (stale.parent / f"pass-{pass_no}-superseded-{number}").exists():
+            number += 1
+        stale.rename(stale.parent / f"pass-{pass_no}-superseded-{number}")
+    since = run.extra.get("pending_review_since")
+    if since:
+        run.extra["last_reviewed_sha"] = since
+    else:
+        run.extra.pop("last_reviewed_sha", None)  # the next delta then starts at the merge base
+    for key in (*PENDING_REVIEW_KEYS, f"verdict_pass_{pass_no}"):
+        run.extra.pop(key, None)
+    with transaction(deps.conn):
+        findings_repo.delete_pass(deps.conn, run.id, pass_no)
+        run.pass_no = pass_no - 1
+        run.updated_at = now(deps)
+        runs_repo.save_run_keeping_control(deps.conn, run)
 
 
 def _write_review_inputs(deps: Deps, run: Run, pull, pass_no: int, directory, findings: list[Finding], discussion_text: str) -> str:
@@ -331,6 +382,12 @@ def _after_review(deps: Deps, run: Run) -> Run:
     run.extra[f"head_pass_{run.pass_no}"] = run.head_sha
     decision = decide_after_review(findings, run.pass_no, run.budgets.max_review_passes,
                                    head_verified=run.extra.get("verified_head") == run.head_sha)
+    if decision.next in ("verify", "complete") and run.extra.get("last_reviewed_sha") != run.head_sha:
+        # The branch moved after this review was posted, so it inspected an earlier commit than the head. The head is
+        # reviewed before anything is verified or completed, within the pass budget.
+        if run.pass_no < run.budgets.max_review_passes:
+            return save(deps, run, RunState.REREVIEWING)
+        return complete_run(deps, run, Outcome.COMPLETE_WITH_EXCEPTIONS, exhausted=True)
     if decision.next == "assess" and _new_signals(deps, run, findings):
         return save(deps, run, RunState.ALIGNING)
     if decision.next == "assess":

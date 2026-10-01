@@ -61,6 +61,10 @@ class GitClient(Protocol):
 
     def stage_all_and_tree_hash(self, path: str) -> str: ...
 
+    # The patch from base to tree, written to destination as git produces it: binary-safe and free of the user's diff
+    # settings, so `git apply` on base reproduces the tree.
+    def write_patch(self, path: str, base: str, tree: str, destination: str) -> None: ...
+
     # The tree `stage_all_and_tree_hash` would write, computed in a scratch index so the worktree's own index is untouched.
     def working_tree_hash(self, path: str) -> str: ...
 

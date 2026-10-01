@@ -52,6 +52,11 @@ class GitCli:
     def diff(self, repo_path: str, base: str, head: str) -> str:
         return self._git(repo_path, "diff", f"{base}..{head}") + "\n"
 
+    def write_patch(self, path: str, base: str, tree: str, destination: str) -> None:
+        """Written by git itself, so nothing strips a trailing blank context line or rewrites line endings."""
+        self._git_raw(path, "diff", "--no-color", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+                      "--src-prefix=a/", "--dst-prefix=b/", f"--output={Path(destination).resolve()}", base, tree, "--")
+
     def log_between(self, repo_path: str, base: str, head: str) -> list[str]:
         lines = self._git(repo_path, "log", "--format=%H %s", f"{base}..{head}").splitlines()
         return [f"{line[:9]} {line[41:]}" for line in lines]

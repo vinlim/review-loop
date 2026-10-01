@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Callable
 
 from review_loop.config.settings import RepositoryConfig
 from review_loop.engine.env import sanitize_env
@@ -40,10 +41,12 @@ def local_branch(pr_number: int) -> str:
 
 def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, process: ProcessRunner, state_dir: Path,
                       base_env: dict[str, str], changed_paths: list[str], timeout_seconds: int = 1800,
-                      log_path: Path | None = None, loop_tree: str = "",
-                      discarded_patch_path: Path | None = None) -> Result[WorkspaceReady, WorkspaceProblem]:
+                      log_path: Path | None = None, loop_tree: str = "", discarded_patch_path: Path | None = None,
+                      on_discard: Callable[[str], None] | None = None) -> Result[WorkspaceReady, WorkspaceProblem]:
     """`loop_tree` is the tree the loop last left in the worktree. A dirty worktree holding exactly that tree is the loop's
-    own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses."""
+    own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses.
+    `on_discard` records the patch before the worktree is reset or any prepare command runs, so a failure after it
+    cannot lose the receipt."""
     path = workspace_path(repo, run.pr_number)
     branch = local_branch(run.pr_number)
     discarded = ""
@@ -55,7 +58,9 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
             if not loop_tree or discarded_patch_path is None or git.working_tree_hash(path) != loop_tree:
                 return Err(WorkspaceProblem.DIRTY)
             discarded_patch_path.parent.mkdir(parents=True, exist_ok=True)
-            discarded_patch_path.write_text(git.diff(path, git.head_sha(path), loop_tree))
+            git.write_patch(path, git.head_sha(path), loop_tree, str(discarded_patch_path))
+            if on_discard is not None:
+                on_discard(str(discarded_patch_path))
             git.stage_all_and_tree_hash(path)  # staged, the fix's new files are removed by the reset as well
             discarded = str(discarded_patch_path)
         git.reset_hard(path, run.head_sha)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from review_loop.repositories import runs as runs_repo
+from review_loop.repositories import verification as verification_repo
 from review_loop.types.protocols import Clock
 from review_loop.types.result import Err, Ok, Result
 from review_loop.types.run import WORKING_STATES, PauseReason, Run, RunState
@@ -43,6 +44,8 @@ def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = 
         return Err(f"run {run.id} is {run.state.value}, not paused")
     else:
         moved = head_moved if head_moved is not None else run.pause_reason == PauseReason.HEAD_CHANGED
+        if run.pause_reason == PauseReason.CHECKS_FAILED and not run.extra.get("loop_tree"):
+            _recover_loop_tree(conn, run)
         run.state = RunState.PREPARING if moved else run.resume_state
         run.resume_state = None
         run.pause_reason = None
@@ -52,6 +55,15 @@ def resume(conn: sqlite3.Connection, run: Run, clock: Clock, unattended: bool = 
     current = runs_repo.get_run(conn, run.id)
     reason = f" ({current.pause_reason.value})" if current.pause_reason else ""
     return Err(f"run {run.id} changed while resuming: it is now {current.state.value}{reason}")
+
+
+def _recover_loop_tree(conn: sqlite3.Connection, run: Run) -> None:
+    """A checks_failed pause can carry no loop tree. The failed verification that paused it recorded the tree it checked,
+    which is the tree the loop left; preparation still discards only a worktree that matches it exactly."""
+    results = verification_repo.list_results(conn, run.id)
+    latest = results[-1] if results else None
+    if latest and latest["pass_no"] == run.pass_no and latest["status"] in ("failed", "unavailable") and latest["tree_hash"]:
+        run.extra["loop_tree"] = latest["tree_hash"]
 
 
 def pause_by_hand(conn: sqlite3.Connection, run: Run, clock: Clock) -> Result[Run, Run]:

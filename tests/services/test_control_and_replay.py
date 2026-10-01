@@ -596,3 +596,210 @@ def test_checks_that_fail_on_the_base_branch_recover_once_the_base_fix_is_merged
     patch = run.extra["discarded_fix_patches"][-1]
     assert patch.endswith("discarded-fix-1.patch") and Path(patch).exists()
     assert all(f.state == "accepted" for f in h.findings().values()), "the unverified fix is redone on the new head"
+
+
+def to_checks_failed(h):
+    """The fix and its repair both fail the same check, as in the base-fix test, ending in a checks_failed pause."""
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout=FAILING)
+    run = step(h.deps, to_verifying(h))
+    h.author.reply(FIX)
+    return step(h.deps, step(h.deps, run))
+
+
+def move_branch(h, sha="e" * 40):
+    h.git.remote_heads["claude/change"] = sha
+    h.github.move_head(1004, sha)
+
+
+# --- a review is bound to the commit it inspected: a pending one is never replayed onto a head it did not see ----------
+
+def test_a_review_left_pending_on_a_commit_the_branch_moved_from_is_reviewed_again_on_the_new_head_before_completion(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.on_run = lambda request: run_control.pause(h.conn, runs_repo.get_run(h.conn, run.id), PauseReason.MANUAL, FakeClock())
+    h.reviewer.reply(APPROVE)
+    paused = step(h.deps, run)
+    assert paused.extra["pending_review_pass"] == 1 and paused.extra["last_reviewed_sha"] == "a" * 40
+    h.reviewer.on_run = None
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+    h.reviewer.reply(APPROVE)
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.extra["last_reviewed_sha"] == "e" * 40
+    assert len(h.reviewer.requests) == 2 and "e" * 40 in h.reviewer.requests[-1].prompt
+    reviews = [write for write in h.github.writes if write[0] == "post_review"]
+    assert len(reviews) == 1 and reviews[0][3] == "e" * 40, "only the review of the new head is posted, once"
+    assert (tmp_path / "runs" / run.id / "pass-1-superseded-1" / "review-output.json").exists(), "the stale review is kept"
+
+
+def test_a_review_posted_before_the_branch_moved_is_kept_and_the_new_head_is_rereviewed_before_completion(settings, tmp_path):
+    h = Harness(settings, tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.reply(APPROVE)
+    original_save = runs_repo.save_run_unless_controlled
+
+    def crash_after_publish(conn, run_object):
+        if [w for w in h.github.writes if w[0] == "post_review"]:
+            raise RuntimeError("simulated crash after the review was posted, before its bookkeeping was saved")
+        return original_save(conn, run_object)
+
+    import review_loop.services.phase_support as support
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
+    try:
+        try:
+            step(h.deps, run)
+        except RuntimeError:
+            pass
+    finally:
+        support.runs_repo.save_run_unless_controlled = original_save
+    move_branch(h)
+    stranded = runs_repo.get_run(h.conn, run.id)
+    assert stranded.state == RunState.REVIEWING and stranded.extra["pending_review_pass"] == 1
+    resumed = run_control.resume(h.conn, stranded, FakeClock(), unattended=True, head_moved=True).value
+    h.reviewer.reply(APPROVE)
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.pass_no == 2 and run.extra["last_reviewed_sha"] == "e" * 40
+    reviews = [write for write in h.github.writes if write[0] == "post_review"]
+    assert [review[3] for review in reviews] == ["a" * 40, "e" * 40], "the posted review keeps its commit; the new head gets its own"
+
+
+def test_at_the_pass_budget_a_head_the_last_review_never_saw_completes_as_exhausted_instead_of_another_pass(settings, tmp_path):
+    from tests.services.test_coordinator_phases import with_review
+
+    h = Harness(with_review(settings, max_review_passes=1), tmp_path)
+    h.process.script([".claude/run-tests.sh", "changed"], stdout="Tests: 42 passed")
+    run = step(h.deps, h.run)
+    h.reviewer.reply(APPROVE)
+    original_save = runs_repo.save_run_unless_controlled
+
+    def crash_after_publish(conn, run_object):
+        if [w for w in h.github.writes if w[0] == "post_review"]:
+            raise RuntimeError("simulated crash after the review was posted")
+        return original_save(conn, run_object)
+
+    import review_loop.services.phase_support as support
+    support.runs_repo.save_run_unless_controlled = crash_after_publish
+    try:
+        try:
+            step(h.deps, run)
+        except RuntimeError:
+            pass
+    finally:
+        support.runs_repo.save_run_unless_controlled = original_save
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), unattended=True, head_moved=True).value
+
+    run = run_loop(h.deps, resumed)
+
+    assert run.state == RunState.COMPLETE and run.outcome.value == "complete_with_exceptions" and run.pass_no == 1
+    assert len(h.reviewer.requests) == 1
+
+
+# --- recovery: the loop's ownership snapshot, the patch receipt -------------------------------------------------------------
+
+def test_a_checks_failed_run_paused_without_a_recorded_loop_tree_recovers_from_its_verification_record(settings, tmp_path):
+    from review_loop.repositories import verification as verification_repo
+
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    run.extra.pop("loop_tree")  # paused before the loop recorded the tree it leaves
+    runs_repo.save_run(h.conn, run)
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = verification_repo.list_results(h.conn, run.id)[-1]["tree_hash"]
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", worktree, "e" * 40) in h.git.calls
+    assert len(run.extra["discarded_fix_patches"]) == 1
+
+
+def test_a_tree_changed_while_the_checks_ran_is_never_discarded_by_a_later_recovery(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    h.git.tree_hashes = ["t" * 40, "x" * 40]  # someone edited a tracked file while the required check ran
+    run = step(h.deps, run)
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.UNEXPECTED_COMMIT
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = "x" * 40
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.WORKSPACE_DIRTY
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("write_patch", "diff", "stage_all", "reset_hard")]
+
+
+def test_a_formatter_that_edits_then_fails_leaves_a_tree_a_later_recovery_can_discard(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+    from tests.services.test_verify_guards import with_verification
+
+    h = harness(with_verification(settings, format=[["vendor/bin/pint", "--dirty"]]), tmp_path)
+    h.process.script(["vendor/bin/pint", "--dirty"], exit_code=1, stderr="syntax error")
+    run = to_verifying(h)
+    worktree = run.worktree_path
+    formatted = iter(["p" * 40, "q" * 40])  # each failing run of the formatter rewrites files first
+    h.process.on_run = lambda call: h.git.working_trees.__setitem__(worktree, next(formatted)) if call["argv"][0] == "vendor/bin/pint" else None
+    run = step(h.deps, run)
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    h.git.clean[worktree] = False
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", worktree, "e" * 40) in h.git.calls
+    assert [call[3] for call in h.git.calls if call[0] == "write_patch"] == ["q" * 40]
+
+
+def test_a_discarded_fix_is_recorded_before_preparation_can_fail_and_a_later_discard_never_overwrites_it(settings, tmp_path):
+    from review_loop.cli.render import render_show
+
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = run.extra["loop_tree"]
+    move_branch(h)
+    h.git.diff_text = "first discarded fix\n"
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != ("bash", ".claude/worktree-setup.sh")]
+    h.process.script(["bash", ".claude/worktree-setup.sh"], exit_code=1, stderr="composer: not found")
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    failed = step(h.deps, resumed)
+
+    assert failed.state == RunState.PAUSED and failed.pause_reason == PauseReason.PREPARE_FAILED
+    persisted = runs_repo.get_run(h.conn, run.id)
+    first = persisted.extra["discarded_fix_patches"]
+    assert len(first) == 1 and Path(first[0]).read_text() == "first discarded fix\n"
+    assert f"discarded unverified fix: {first[0]}" in render_show(persisted, findings=[])
+    # A later discard, modelled by preparing again over the loop's tree once the prepare command works.
+    h.git.diff_text = "second discarded fix\n"
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != ("bash", ".claude/worktree-setup.sh")]
+    h.process.script(["bash", ".claude/worktree-setup.sh"])
+    resumed = run_control.resume(h.conn, persisted, FakeClock(), head_moved=False).value
+
+    run = step(h.deps, resumed)
+
+    patches = run.extra["discarded_fix_patches"]
+    assert run.state == RunState.REVIEWING and len(patches) == 2 and patches[0] == first[0] and patches[1] != first[0]
+    assert Path(patches[0]).read_text() == "first discarded fix\n" and Path(patches[1]).read_text() == "second discarded fix\n"

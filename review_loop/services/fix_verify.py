@@ -99,7 +99,7 @@ def phase_verify(deps: Deps, run: Run) -> Run:
     log_path = directory / f"verify-{attempt_no}.log"
     log_path.write_text(checks.log)
     verification_repo.add_result(deps.conn, run.id, run.pass_no, attempt_no, checks.tree, checks.commands, checks.status, str(log_path), now(deps))
-    if checks.tree:
+    if checks.tree and checks.status != "tree_changed":  # a tree changed under the checks holds an edit that is not the loop's
         run.extra["loop_tree"] = checks.tree  # the formatter may have changed the tree since the fix
     if checks.status in ("failed", "unavailable"):
         run.extra["checks_failure"] = {"log": str(log_path), "excerpt": failure_excerpt(checks.blocks)}
@@ -192,7 +192,8 @@ def _run_checks(deps: Deps, run: Run, repo_config, env: dict[str, str]) -> Check
     for command in verification.format:
         ran.append(command)
         if _outcome(deps.process.run(command, cwd=run.worktree_path, env=env, timeout_seconds=timeout), verification, blocks) != "passed":
-            return CheckOutcome("failed", _log(blocks), "", ran, blocks)
+            # A formatter can rewrite files before it fails; what it left is still the loop's own tree.
+            return CheckOutcome("failed", _log(blocks), deps.git.working_tree_hash(run.worktree_path), ran, blocks)
     tree_before = deps.git.stage_all_and_tree_hash(run.worktree_path)
     statuses = _run_required(deps, run, verification.required, verification, env, timeout, blocks, ran)
     if _selected_nothing(statuses) and verification.fallback:

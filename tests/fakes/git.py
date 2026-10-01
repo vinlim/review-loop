@@ -65,6 +65,11 @@ class FakeGit:
         self._record("diff", repo_path, base, head)
         return self.diff_text
 
+    def write_patch(self, path: str, base: str, tree: str, destination: str) -> None:
+        self._record("write_patch", path, base, tree, destination)
+        with open(destination, "w") as patch:
+            patch.write(self.diff_text)
+
     def log_between(self, repo_path: str, base: str, head: str) -> list[str]:
         self._record("log_between", repo_path, base, head)
         return list(self.log_lines)

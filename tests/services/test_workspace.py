@@ -209,13 +209,17 @@ def test_a_dirty_worktree_holding_exactly_the_loops_unverified_fix_is_discarded_
     git.diff_text = "diff --git a/app/X.php b/app/X.php\n+the unverified fix\n"
     patch = tmp_path / "runs" / "webapp-1004-x" / "discarded-fix-1.patch"
 
+    recorded = []
+
     result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
-                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=patch)
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=patch,
+                               on_discard=lambda written: recorded.append((written, [call[0] for call in git.calls])))
 
     assert result.ok and result.value.discarded_patch == str(patch)
-    assert patch.read_text() == git.diff_text and ("diff", path, "o" * 40, "f" * 40) in git.calls
+    assert patch.read_text() == git.diff_text and ("write_patch", path, "o" * 40, "f" * 40, str(patch)) in git.calls
     names = [call[0] for call in git.calls]
-    assert names.index("stage_all") < names.index("reset_hard") and ("reset_hard", path, "h" * 40) in git.calls
+    assert names.index("write_patch") < names.index("stage_all") < names.index("reset_hard") and ("reset_hard", path, "h" * 40) in git.calls
+    assert recorded == [(str(patch), names[:names.index("write_patch") + 1])], "the receipt is recorded before staging or the reset"
 
 
 def test_a_dirty_worktree_that_is_not_exactly_the_loops_fix_still_pauses_and_its_index_is_untouched(settings, tmp_path):
@@ -230,5 +234,5 @@ def test_a_dirty_worktree_that_is_not_exactly_the_loops_fix_still_pauses_and_its
                                changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
 
     assert not result.ok and result.error == WorkspaceProblem.DIRTY
-    assert not any(call[0] in ("stage_all", "reset_hard", "diff") for call in git.calls)
+    assert not any(call[0] in ("stage_all", "reset_hard", "write_patch") for call in git.calls)
     assert not (tmp_path / "p.patch").exists()
