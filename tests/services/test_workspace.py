@@ -236,3 +236,33 @@ def test_a_dirty_worktree_that_is_not_exactly_the_loops_fix_still_pauses_and_its
     assert not result.ok and result.error == WorkspaceProblem.DIRTY
     assert not any(call[0] in ("stage_all", "reset_hard", "write_patch") for call in git.calls)
     assert not (tmp_path / "p.patch").exists()
+
+
+def test_a_clean_worktree_holding_someone_elses_commit_is_never_reset(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "u" * 40  # a person committed in the worktree; git reports it clean
+    git.working_trees[path] = "x" * 40
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert not result.ok and result.error == WorkspaceProblem.UNEXPECTED_COMMIT
+    assert not any(call[0] in ("reset_hard", "stage_all", "write_patch") for call in git.calls) and git.heads[path] == "u" * 40
+    assert process.calls == []
+
+
+def test_a_clean_worktree_at_the_loops_own_commit_is_reset_to_the_adopted_head(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "c" * 40  # the loop's verified commit, whose tree is the loop's snapshot
+    git.working_trees[path] = "f" * 40
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert result.ok and ("reset_hard", path, "h" * 40) in git.calls

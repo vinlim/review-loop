@@ -20,6 +20,7 @@ GH_SHIM = "#!/bin/sh\necho 'gh is not available to agents; the review-loop coord
 class WorkspaceProblem(StrEnum):
     DIRTY = "dirty"
     FOREIGN = "foreign"
+    UNEXPECTED_COMMIT = "unexpected_commit"
     PREPARE_FAILED = "prepare_failed"
 
 
@@ -44,7 +45,8 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
                       log_path: Path | None = None, loop_tree: str = "", discarded_patch_path: Path | None = None,
                       on_discard: Callable[[str], None] | None = None) -> Result[WorkspaceReady, WorkspaceProblem]:
     """`loop_tree` is the tree the loop last left in the worktree. A dirty worktree holding exactly that tree is the loop's
-    own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses.
+    own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses, and
+    so does a clean worktree at another commit whose tree is not that one: someone committed there.
     `on_discard` records the patch before the worktree is reset or any prepare command runs, so a failure after it
     cannot lose the receipt."""
     path = workspace_path(repo, run.pr_number)
@@ -63,6 +65,8 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
                 on_discard(str(discarded_patch_path))
             git.stage_all_and_tree_hash(path)  # staged, the fix's new files are removed by the reset as well
             discarded = str(discarded_patch_path)
+        elif loop_tree and git.head_sha(path) != run.head_sha and git.working_tree_hash(path) != loop_tree:
+            return Err(WorkspaceProblem.UNEXPECTED_COMMIT)
         git.reset_hard(path, run.head_sha)
     else:
         git.worktree_add(str(repo.local_path), path, branch, run.head_sha)

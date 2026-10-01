@@ -88,8 +88,8 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     if not ready.ok:
         if ready.error == WorkspaceProblem.PREPARE_FAILED:
             run.extra["prepare_log"], run.extra["prepare_failure"] = str(log_path), log_path.read_text()[-4000:]
-        reason = {WorkspaceProblem.DIRTY: PauseReason.WORKSPACE_DIRTY, WorkspaceProblem.FOREIGN: PauseReason.WORKSPACE_FOREIGN}.get(
-            ready.error, PauseReason.PREPARE_FAILED)
+        reason = {WorkspaceProblem.DIRTY: PauseReason.WORKSPACE_DIRTY, WorkspaceProblem.FOREIGN: PauseReason.WORKSPACE_FOREIGN,
+                  WorkspaceProblem.UNEXPECTED_COMMIT: PauseReason.UNEXPECTED_COMMIT}.get(ready.error, PauseReason.PREPARE_FAILED)
         return pause(deps, run, reason)
     run.extra["prepare_log"] = str(log_path)
     run.extra.pop("prepare_failure", None)

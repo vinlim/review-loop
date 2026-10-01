@@ -886,3 +886,20 @@ def test_an_edit_made_before_a_repair_fix_is_never_adopted_by_the_repair(setting
 
     assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.WORKSPACE_DIRTY) and run.extra["loop_tree"] == snapshot
     assert len([r for r in h.author.requests if r.phase == "fix"]) == fix_requests
+
+
+def test_a_commit_made_in_a_paused_runs_worktree_is_kept_when_the_branch_moves(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = to_checks_failed(h)
+    worktree = run.worktree_path
+    h.git.heads[worktree] = "u" * 40  # a person commits their own change in the paused run's worktree
+    h.git.working_trees[worktree] = "x" * 40
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("reset_hard", "write_patch", "stage_all")]
+    assert h.git.heads[worktree] == "u" * 40 and "discarded_fix_patches" not in run.extra
