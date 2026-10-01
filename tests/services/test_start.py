@@ -35,7 +35,7 @@ def test_start_creates_a_run_in_preparing_with_head_base_merge_base_budgets_vers
     assert (run.head_sha, run.base_sha, run.merge_base_sha) == ("a" * 40, "b" * 40, "c" * 40)
     assert (run.budgets.max_review_passes, run.budgets.max_fix_attempts, run.budgets.max_alignment_exchanges) == (7, 2, 1)
     assert run.versions["codex"] == "0.157.1"
-    assert run.agents == {"reviewer": AgentChoice("codex", "gpt-5.6-sol", "xhigh"), "author": AgentChoice("claude", "claude-opus-5-5", "xhigh")}
+    assert run.agents == {"reviewer": AgentChoice("codex", "gpt-6.1-sol", "xhigh"), "author": AgentChoice("claude", "claude-opus-5-5", "xhigh")}
     assert runs_repo.get_run(conn, run.id) == run
 
 

@@ -92,3 +92,26 @@ def test_show_tells_the_operator_to_wait_for_a_coordinator_still_finishing_its_p
     text = render_show(run(RunState.PAUSED, PauseReason.MANUAL), findings=[], finishing=True)
 
     assert "state: paused (manual) (coordinator still finishing its phase; resume after it exits)" in text
+
+
+def test_show_prints_the_failing_check_lines_and_the_authors_last_fix_report_for_checks_failed():
+    import json
+
+    report = {"changes": ["R3-F1"], "tests_run": [
+        {"command": ".claude/run-tests.sh tests/Feature/ChannelWabaEventIngestionTest.php", "result": "1 failed in every run, including without this change; already on main."}]}
+    paused = run(RunState.PAUSED, PauseReason.CHECKS_FAILED, extra={
+        "checks_failure": {"log": "/state/runs/x/pass-2/verify-2.log", "excerpt": ["$ .claude/run-tests.sh full", "exit 1", "FAILED  Tests\\Feature\\X > y"]},
+        "fix_pass_2": json.dumps(report)})
+
+    text = render_show(paused, findings=[])
+
+    assert "verification log: /state/runs/x/pass-2/verify-2.log" in text
+    assert "  FAILED  Tests\\Feature\\X > y" in text
+    assert "author's last fix report:" in text
+    assert "  .claude/run-tests.sh tests/Feature/ChannelWabaEventIngestionTest.php: 1 failed in every run, including without this change; already on main." in text
+
+
+def test_show_names_where_a_discarded_unverified_fix_was_kept():
+    text = render_show(run(extra={"discarded_fix_patches": ["/state/runs/x/discarded-fix-1.patch"]}), findings=[])
+
+    assert "discarded unverified fix: /state/runs/x/discarded-fix-1.patch" in text

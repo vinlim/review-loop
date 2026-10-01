@@ -39,6 +39,8 @@ def render_show(run: Run, findings: list, configured: dict[str, AgentChoice] | N
         *_prepare_failure_lines(run),
         *_coordinator_failure_lines(run),
         *_preflight_failure_lines(run),
+        *_checks_failure_lines(run),
+        *(f"discarded unverified fix: {path}" for path in run.extra.get("discarded_fix_patches", [])),
         "",
     ]
     if not findings:
@@ -73,6 +75,22 @@ def _preflight_failure_lines(run: Run) -> list[str]:
     if run.pause_reason != PauseReason.AGENT_UNAVAILABLE or not run.extra.get("preflight_failure"):
         return []
     return [f"preflight: {run.extra['preflight_failure']}"]
+
+
+def _checks_failure_lines(run: Run) -> list[str]:
+    """The failing lines of the last verification and the author's own report from the fix it checked, which is where an
+    author says a failure was already on the base branch."""
+    import json
+
+    failure = run.extra.get("checks_failure")
+    if run.pause_reason != PauseReason.CHECKS_FAILED or not failure:
+        return []
+    lines = [f"verification log: {failure['log']}", *("  " + line for line in failure["excerpt"])]
+    report = json.loads(run.extra.get(f"fix_pass_{run.pass_no}", "{}") or "{}")
+    if report.get("tests_run"):
+        lines.append("author's last fix report:")
+        lines += [f"  {entry['command']}: {str(entry['result'])[:400]}" for entry in report["tests_run"]]
+    return lines
 
 
 def _state(run: Run) -> str:

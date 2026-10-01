@@ -196,3 +196,39 @@ def test_a_fallback_check_script_counts_as_a_registered_script(settings):
     repo = dataclasses.replace(repo, verification=dataclasses.replace(repo.verification, fallback=[["scripts/full-suite.sh"]]))
 
     assert "scripts/full-suite.sh" in registered_script_files(repo)
+
+
+def test_a_dirty_worktree_holding_exactly_the_loops_unverified_fix_is_discarded_and_kept_as_a_patch(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "o" * 40  # the old head the fix was made on
+    git.clean[path] = False
+    git.working_trees[path] = "f" * 40
+    git.diff_text = "diff --git a/app/X.php b/app/X.php\n+the unverified fix\n"
+    patch = tmp_path / "runs" / "webapp-1004-x" / "discarded-fix-1.patch"
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=patch)
+
+    assert result.ok and result.value.discarded_patch == str(patch)
+    assert patch.read_text() == git.diff_text and ("diff", path, "o" * 40, "f" * 40) in git.calls
+    names = [call[0] for call in git.calls]
+    assert names.index("stage_all") < names.index("reset_hard") and ("reset_hard", path, "h" * 40) in git.calls
+
+
+def test_a_dirty_worktree_that_is_not_exactly_the_loops_fix_still_pauses_and_its_index_is_untouched(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.clean[path] = False
+    git.working_trees[path] = "x" * 40  # someone edited the tree after the loop left it
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[], loop_tree="f" * 40, discarded_patch_path=tmp_path / "p.patch")
+
+    assert not result.ok and result.error == WorkspaceProblem.DIRTY
+    assert not any(call[0] in ("stage_all", "reset_hard", "diff") for call in git.calls)
+    assert not (tmp_path / "p.patch").exists()

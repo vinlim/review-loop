@@ -20,6 +20,7 @@ class FakeGit:
         self.on_push = None
         self.branches: dict[str, str] = {}
         self.tree_hashes: list[str] = []
+        self.working_trees: dict[str, str] = {}
         self.calls: list[tuple] = []
         self.log = log if log is not None else []
 
@@ -78,6 +79,10 @@ class FakeGit:
 
     def working_changed_files(self, path: str) -> list[str]:
         return list(self.working_changed)
+
+    def working_tree_hash(self, path: str) -> str:
+        self._record("working_tree_hash", path)
+        return self.working_trees.get(path, "w" * 40)
 
     def stage_all_and_tree_hash(self, path: str) -> str:
         self._record("stage_all", path)

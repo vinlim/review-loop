@@ -1,4 +1,5 @@
 """Findings about control state and replay: pause from outside, stale PR state before an effect, receipts after crashes."""
+from pathlib import Path
 
 from review_loop.config.settings import PublicationConfig
 from review_loop.repositories import outbox as outbox_repo
@@ -542,3 +543,56 @@ def test_a_crash_while_recording_the_push_leaves_findings_and_run_untouched_toge
 
     assert run.state == RunState.PUBLISHING and len(h.git.pushes) == 1 and run.extra["remote_head"] == h.git.pushes[0][2]
     assert all(f.state == "fixed_pending_verification" for f in h.findings().values())
+
+
+# --- a base fix flows in: someone moves the branch, a resume re-prepares on it, the loop's unverified fix is discarded ----
+
+FAILING = "   FAILED  Tests\\Feature\\ChannelWabaEventIngestionTest > a redelivered ACCOUNT_OFFBOARDED does not alert twice\n" \
+          "Failed asserting that 0 is identical to 1.\n  Tests:    1 failed, 5 skipped, 42 passed (90 assertions)\n"
+
+
+def test_preparation_adopts_the_head_git_shows_and_records_it_so_the_next_effect_does_not_pause(settings, tmp_path):
+    from review_loop.services.phase_support import head_moved
+
+    h = harness(settings, tmp_path)
+    run = to_publishing(h)
+    run = run_control.pause(h.conn, run, PauseReason.MANUAL, FakeClock())
+    h.git.remote_heads["claude/change"] = "e" * 40  # someone else pushed; the API has not caught up
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and run.head_sha == "e" * 40 and run.extra["remote_head"] == "e" * 40
+    names = [call[0] for call in h.git.calls[calls_before:]]
+    assert names.index("fetch") < names.index("merge_base"), "the new head is fetched before anything reads it"
+    assert not head_moved(h.deps, run)
+
+
+def test_checks_that_fail_on_the_base_branch_recover_once_the_base_fix_is_merged_into_the_pr(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    h.process.scripts = [entry for entry in h.process.scripts if entry[0] != (".claude/run-tests.sh", "changed")]
+    h.process.script([".claude/run-tests.sh", "changed"], exit_code=1, stdout=FAILING)
+    run = step(h.deps, to_verifying(h))
+    assert run.state == RunState.FIXING
+    h.author.reply(FIX)
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.PAUSED and run.pause_reason == PauseReason.CHECKS_FAILED
+    failure = run.extra["checks_failure"]
+    assert any("ChannelWabaEventIngestionTest" in line for line in failure["excerpt"]) and failure["log"].endswith("verify-2.log")
+    worktree = run.worktree_path
+    h.git.clean[worktree] = False
+    h.git.working_trees[worktree] = run.extra["loop_tree"]  # exactly what the loop left
+    h.git.remote_heads["claude/change"] = "e" * 40  # the base fix, merged into the PR branch
+    h.github.move_head(1004, "e" * 40)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and run.head_sha == "e" * 40
+    assert ("reset_hard", worktree, "e" * 40) in h.git.calls
+    patch = run.extra["discarded_fix_patches"][-1]
+    assert patch.endswith("discarded-fix-1.patch") and Path(patch).exists()
+    assert all(f.state == "accepted" for f in h.findings().values()), "the unverified fix is redone on the new head"

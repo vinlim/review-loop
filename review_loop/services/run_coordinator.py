@@ -74,15 +74,17 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     if pull.state != "open":
         return finish(deps, run, RunState.CANCELLED)
     inspect_only(deps, run)
-    adopt_head(deps, run, repo_config, pull)
     deps.git.fetch(str(repo_config.local_path), "origin", [run.base_ref, run.head_ref])
+    adopt_head(deps, run, repo_config, pull)
     changed = deps.git.changed_files(str(repo_config.local_path), run.merge_base_sha, run.head_sha)
     if set(changed) & registered_script_files(repo_config):
         run.extra["scripts_changed"] = sorted(set(changed) & registered_script_files(repo_config))
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED)
     log_path = _prepare_log_path(deps, run)
+    patches = run.extra.get("discarded_fix_patches", [])
     ready = prepare_workspace(run, repo_config, git=deps.git, process=deps.process, state_dir=deps.settings.state_dir,
-                              base_env=deps.base_env, changed_paths=changed, log_path=log_path)
+                              base_env=deps.base_env, changed_paths=changed, log_path=log_path, loop_tree=run.extra.get("loop_tree", ""),
+                              discarded_patch_path=deps.runs_dir / run.id / f"discarded-fix-{len(patches) + 1}.patch")
     if not ready.ok:
         if ready.error == WorkspaceProblem.PREPARE_FAILED:
             run.extra["prepare_log"], run.extra["prepare_failure"] = str(log_path), log_path.read_text()[-4000:]
@@ -91,6 +93,9 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
         return pause(deps, run, reason)
     run.extra["prepare_log"] = str(log_path)
     run.extra.pop("prepare_failure", None)
+    run.extra.pop("loop_tree", None)  # the worktree now holds the adopted head and nothing of the loop's
+    if ready.value.discarded_patch:
+        run.extra["discarded_fix_patches"] = patches + [ready.value.discarded_patch]
     run.worktree_path, run.local_branch = ready.value.path, ready.value.local_branch
     if run.author_session in ("", "auto"):
         run.author_session = deps.find_author_session(repo_config.review.author, run.head_ref, str(repo_config.local_path))

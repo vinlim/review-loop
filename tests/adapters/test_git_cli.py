@@ -213,3 +213,18 @@ def test_the_git_adapter_reads_a_remote_branch_head_and_an_empty_string_for_a_mi
 
     assert git.remote_branch_head(str(repo), origin, "main") == sh(repo, "git", "rev-parse", "HEAD")
     assert git.remote_branch_head(str(repo), origin, "no-such-branch") == ""
+
+
+def test_the_working_tree_hash_matches_staging_everything_and_leaves_the_index_alone(repo):
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+    head = sh(repo, "git", "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("two\n")
+    (repo / "new.txt").write_text("brand new\n")
+    before = sh(repo, "git", "status", "--porcelain")
+
+    tree = git.working_tree_hash(str(repo))
+
+    assert sh(repo, "git", "status", "--porcelain") == before, "the real index is untouched"
+    assert tree == git.stage_all_and_tree_hash(str(repo))
+    patch = git.diff(str(repo), head, tree)
+    assert "+two" in patch and "+brand new" in patch

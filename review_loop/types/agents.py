@@ -48,7 +48,7 @@ AGENT_PROFILES = {
                         startup_files=(".agents/hooks.json", ".agents/mcp_config.json", ".agents/plugins/", ".agents/agents/")),
     "claude": AgentProfile("claude", "install Claude Code, then run `claude` once to log in", "claude-opus-5-5", "xhigh",
                            forks_sessions=True),
-    "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-5.6-sol", "xhigh"),
+    "codex": AgentProfile("codex", "install with `npm i -g @openai/codex`, then run `codex login status`", "gpt-6.1-sol", "xhigh"),
     "opencode": AgentProfile("opencode", "install with `npm i -g opencode-ai`, then run `opencode auth login`", forks_sessions=True,
                              startup_files=("opencode.json", "opencode.jsonc", ".opencode/")),
 }

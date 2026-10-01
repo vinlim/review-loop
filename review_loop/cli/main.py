@@ -284,15 +284,16 @@ def command_wait(args, box: Container) -> int:
     return _report_final(box, final)
 
 
-def _head_unchanged(box: Container, run) -> bool:
-    """For a head_changed pause: whether git shows the branch still where the run left it, in which case the pause was
-    the API lagging a push and the run can continue where it paused instead of preparing again."""
+def _head_moved(box: Container, run) -> bool | None:
+    """Whether git shows the branch moved by someone else since the run last saw it, so the resume must prepare again;
+    None when git cannot be asked, which leaves the decision to the pause reason."""
     from review_loop.cli.wiring import build_deps
-    from review_loop.services.phase_support import head_moved
+    from review_loop.services.phase_support import moved_by_others
 
-    if run.pause_reason != PauseReason.HEAD_CHANGED:
-        return False
-    return not head_moved(build_deps(box, inspect_only=run.mode() == "inspect"), run)
+    try:
+        return moved_by_others(build_deps(box, inspect_only=run.mode() == "inspect"), run)
+    except RuntimeError:
+        return None
 
 
 def _lock(box: Container, run) -> RunLock:
@@ -329,7 +330,7 @@ def command_resume(args, box: Container) -> int:
     try:
         # With the lock held, a working state means no coordinator has this run: it continues from that state.
         result = run_control.resume(box.conn, run, box.clock, unattended=run.state in WORKING_STATES,
-                                    head_unchanged=_head_unchanged(box, run))
+                                    head_moved=_head_moved(box, run))
         if not result.ok:
             print(result.error, file=sys.stderr)
             return 2

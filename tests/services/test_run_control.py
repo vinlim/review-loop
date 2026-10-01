@@ -232,6 +232,28 @@ def test_a_head_changed_pause_resumes_where_it_paused_when_the_head_is_known_not
     conn, run = make(RunState.PUBLISHING)
     pause(conn, run, PauseReason.HEAD_CHANGED, FakeClock())
 
-    resumed = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_unchanged=True).value
+    resumed = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=False).value
 
     assert resumed.state == RunState.PUBLISHING
+
+
+def test_any_pause_resumes_through_preparation_when_someone_else_moved_the_branch():
+    conn, run = make(RunState.VERIFYING)
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    moved = resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=True).value
+
+    assert moved.state == RunState.PREPARING
+
+
+def test_a_pause_resumes_where_it_stopped_when_the_branch_did_not_move():
+    conn, run = make(RunState.VERIFYING)
+    pause(conn, run, PauseReason.CHECKS_FAILED, FakeClock())
+
+    assert resume(conn, runs_repo.get_run(conn, run.id), FakeClock(), head_moved=False).value.state == RunState.VERIFYING
+
+
+def test_an_unattended_run_resumes_through_preparation_when_someone_else_moved_the_branch():
+    conn, run = make(RunState.FIXING)
+
+    assert resume(conn, run, FakeClock(), unattended=True, head_moved=True).value.state == RunState.PREPARING

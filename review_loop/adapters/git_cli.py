@@ -83,6 +83,23 @@ class GitCli:
         untracked = self._git_raw(path, "ls-files", "--others", "--exclude-standard", "-z", "--")
         return _names(tracked + untracked)
 
+    def working_tree_hash(self, path: str) -> str:
+        """`add -A` and `write-tree` against a copy of the index, so a worktree that is not ours keeps its staging as found."""
+        import shutil
+        import tempfile
+
+        index = Path(path) / self._git(path, "rev-parse", "--git-path", "index")
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "index"
+            if index.exists():
+                shutil.copyfile(index, copy)
+            env = {**self.env, "GIT_INDEX_FILE": str(copy)}
+            for args in (("add", "-A"), ("write-tree",)):
+                completed = self.process.run(["git", *args], cwd=path, env=env, timeout_seconds=self.timeout_seconds)
+                if completed.exit_code != 0:
+                    raise RuntimeError(f"git {' '.join(args)} in {path} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
+            return completed.stdout.strip()
+
     def stage_all_and_tree_hash(self, path: str) -> str:
         self._git(path, "add", "-A")
         return self._git(path, "write-tree")

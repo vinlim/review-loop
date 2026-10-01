@@ -197,9 +197,13 @@ def request(deps: Deps, repo: RepositoryConfig, run: Run, phase: str, prompt: st
 
 
 def adopt_head(deps: Deps, run: Run, repo: RepositoryConfig, pull: PullRequest) -> None:
-    if pull.head_sha != run.head_sha or pull.base_sha != run.base_sha:
-        run.head_sha, run.base_sha = pull.head_sha, pull.base_sha
-        run.merge_base_sha = deps.git.merge_base(str(repo.local_path), pull.base_sha, pull.head_sha)
+    """Take the branch head git shows (the API can lag a push) and record it as the remote head, since from here the
+    run works on what the branch holds. The caller fetches first, so the merge base can be read."""
+    head = deps.git.remote_branch_head(str(repo.local_path), repo.remote, run.head_ref) or pull.head_sha
+    if head != run.head_sha or pull.base_sha != run.base_sha:
+        run.head_sha, run.base_sha = head, pull.base_sha
+        run.merge_base_sha = deps.git.merge_base(str(repo.local_path), pull.base_sha, head)
+    run.extra["remote_head"] = head
 
 
 def instruction_files(repo: RepositoryConfig, run: Run) -> list[str]:
@@ -317,9 +321,19 @@ def check_pull_before_effect(deps: Deps, run: Run) -> Run | None:
 def head_moved(deps: Deps, run: Run) -> bool:
     """Whether the PR branch points somewhere other than the last head this run put or found there. Git is asked, never
     the API: GitHub can answer from before a push git already confirmed, whether the run's own or someone else's."""
+    return branch_head(deps, run) != remote_head(run)
+
+
+def moved_by_others(deps: Deps, run: Run) -> bool:
+    """Whether the branch points somewhere this run neither found nor pushed. The pass's candidate counts as the run's
+    own: a crash or a pause can follow its push before the record is written."""
+    return branch_head(deps, run) not in (remote_head(run), run.extra.get(f"candidate_commit_pass_{run.pass_no}"))
+
+
+def branch_head(deps: Deps, run: Run) -> str:
     repository = repo(deps, run)
     cwd = run.worktree_path or str(repository.local_path)  # ls-remote needs a directory, not the worktree in particular
-    return deps.git.remote_branch_head(cwd, repository.remote, run.head_ref) != remote_head(run)
+    return deps.git.remote_branch_head(cwd, repository.remote, run.head_ref)
 
 
 class transaction:
