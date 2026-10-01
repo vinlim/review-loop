@@ -903,3 +903,41 @@ def test_a_commit_made_in_a_paused_runs_worktree_is_kept_when_the_branch_moves(s
     assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
     assert not [call for call in h.git.calls[calls_before:] if call[0] in ("reset_hard", "write_patch", "stage_all")]
     assert h.git.heads[worktree] == "u" * 40 and "discarded_fix_patches" not in run.extra
+
+
+def test_a_foreign_commit_in_a_run_paused_without_a_snapshot_is_kept_when_the_branch_moves(settings, tmp_path):
+    from tests.services.test_coordinator_m3 import to_verifying
+
+    h = harness(settings, tmp_path)
+    run = to_verifying(h)
+    worktree = run.worktree_path
+    h.git.working_changed = []
+    h.git.heads[worktree] = "9" * 40  # a commit the loop did not make
+    h.git.commit_infos["9" * 40] = ("0" * 40, "someone else's commit")
+    run = step(h.deps, run)
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    run.extra.pop("loop_tree")  # paused before the loop recorded a snapshot
+    runs_repo.save_run(h.conn, run)
+    move_branch(h)
+    calls_before = len(h.git.calls)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.UNEXPECTED_COMMIT)
+    assert not [call for call in h.git.calls[calls_before:] if call[0] in ("reset_hard", "write_patch", "stage_all")]
+    assert h.git.heads[worktree] == "9" * 40
+
+
+def test_a_run_without_a_snapshot_whose_worktree_is_at_its_own_head_is_still_reset_when_the_branch_moves(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)  # the worktree is clean at the head the run prepared, a
+    run = run_control.pause(h.conn, run, PauseReason.HEAD_CHANGED, FakeClock())
+    run.extra.pop("loop_tree")  # paused before the loop recorded a snapshot
+    runs_repo.save_run(h.conn, run)
+    move_branch(h)
+    resumed = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), FakeClock(), head_moved=True).value
+
+    run = step(h.deps, resumed)
+
+    assert run.state == RunState.REVIEWING and ("reset_hard", run.worktree_path, "e" * 40) in h.git.calls

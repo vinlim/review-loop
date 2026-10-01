@@ -75,6 +75,7 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     if pull.state != "open":
         return finish(deps, run, RunState.CANCELLED)
     inspect_only(deps, run)
+    own_heads = _own_heads(run)  # read before adopt_head replaces the head the run was working on
     deps.git.fetch(str(repo_config.local_path), "origin", [run.base_ref, run.head_ref])
     adopt_head(deps, run, repo_config, pull)
     changed = deps.git.changed_files(str(repo_config.local_path), run.merge_base_sha, run.head_sha)
@@ -84,7 +85,8 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
     log_path = _prepare_log_path(deps, run)
     ready = prepare_workspace(run, repo_config, git=deps.git, process=deps.process, state_dir=deps.settings.state_dir,
                               base_env=deps.base_env, changed_paths=changed, log_path=log_path, loop_tree=run.extra.get("loop_tree", ""),
-                              discarded_patch_path=_discarded_patch_path(deps, run), on_discard=lambda path: _record_discarded(deps, run, path))
+                              discarded_patch_path=_discarded_patch_path(deps, run), on_discard=lambda path: _record_discarded(deps, run, path),
+                              own_heads=own_heads)
     if not ready.ok:
         if ready.error == WorkspaceProblem.PREPARE_FAILED:
             run.extra["prepare_log"], run.extra["prepare_failure"] = str(log_path), log_path.read_text()[-4000:]
@@ -99,6 +101,13 @@ def phase_prepare(deps: Deps, run: Run) -> Run:
         run.author_session = deps.find_author_session(repo_config.review.author, run.head_ref, str(repo_config.local_path))
         run.extra["author_session_agent"] = repo_config.review.author
     return save(deps, run, RunState.REVIEWING)
+
+
+def _own_heads(run: Run) -> set[str]:
+    """Commits this run worked on, found on its branch, or made: a clean worktree at one of them holds nobody else's work."""
+    heads = {run.head_sha, run.extra.get("remote_head", "")}
+    heads |= {value for key, value in run.extra.items() if key.startswith(("candidate_commit_pass_", "fix_commit_pass_"))}
+    return {head for head in heads if head}
 
 
 def _discarded_patch_path(deps: Deps, run: Run) -> Path:
