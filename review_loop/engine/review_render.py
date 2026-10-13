@@ -55,8 +55,8 @@ def render_finding_comment(finding_id: str, finding: dict, marker: str) -> str:
 
 
 def _sentence(text: str) -> str:
-    """One full stop at the end, whatever the reviewer put there."""
-    text = " ".join(text.split())
+    """One full stop at the end, whatever the reviewer put there; the text inside is posted as written."""
+    text = text.strip()
     if not text.rstrip(".") or text.endswith(("?", "!")):
         return text
     return f"{text.rstrip('.')}."

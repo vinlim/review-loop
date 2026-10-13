@@ -34,6 +34,26 @@ def test_a_finding_title_ending_in_a_full_stop_is_not_doubled():
     assert "Finding: Bound the page. The first bucket is kept whole.\n" in text
 
 
+LITERAL = "Keep `a  b` and x y as written"
+
+
+def test_whitespace_inside_a_contract_survives_the_full_stop_cleanup():
+    review = a_review(contract={"owns": f"  {LITERAL}..", "does_not_own": LITERAL})
+
+    body = render_review_body(review, [], MARKER)
+
+    assert f"Owns: {LITERAL}.\nDoes not own: {LITERAL}.\n" in body
+
+
+def test_whitespace_inside_a_finding_title_survives_the_full_stop_cleanup():
+    finding = {"file": "a.py", "severity": "ISSUE", "line": 3, "symbol": "", "title": f"{LITERAL}.",
+               "finding": "Detail.", "protected_behaviour": "p", "evidence": "e", "recommendation": "r"}
+
+    text = render_finding_comment("R1-F1", finding, "")
+
+    assert f"Finding: {LITERAL}. Detail.\n" in text
+
+
 def test_a_prior_resolution_reads_as_words():
     review = a_review(resolved_prior=[{"id": "R1-F4", "resolution": "rejection_accepted", "note": "The column holds seconds."}])
 
