@@ -127,11 +127,6 @@ class GitCli:
         message = self._git(path, "log", "-1", "--format=%B", sha)
         return (parents[0] if parents else "", message)
 
-    def is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
-        completed = self.process.run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=path, env=self.env,
-                                     timeout_seconds=self.timeout_seconds)
-        return completed.exit_code == 0
-
     def push_guarded(self, path: str, url: str, sha: str, remote_branch: str, expected_remote_sha: str) -> Result[str, str]:
         """Push one verified commit to one branch: the remote must still show the expected parent, the push
         is by SHA with a lease and no implicit refs, and the remote must show the SHA afterwards."""
