@@ -32,6 +32,30 @@ def repo(tmp_path):
     return local
 
 
+def test_the_git_adapter_tells_an_earlier_commit_from_a_stranger(repo):
+    first = sh(repo, "git", "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("two\n")
+    sh(repo, "git", "commit", "-q", "-am", "two")
+    second = sh(repo, "git", "rev-parse", "HEAD")
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+
+    assert git.is_ancestor(str(repo), first, second)
+    assert git.is_ancestor(str(repo), second, second)
+    assert not git.is_ancestor(str(repo), second, first)
+
+
+@pytest.mark.parametrize("exit_code, stderr, timed_out", [(128, "fatal: Not a valid commit name eeee", False), (-15, "", True)])
+def test_an_ancestry_query_git_could_not_answer_raises_with_its_diagnostics(exit_code, stderr, timed_out):
+    process = FakeProcessRunner()
+    process.script(["git", "merge-base", "--is-ancestor"], exit_code=exit_code, stderr=stderr, timed_out=timed_out)
+    git = GitCli(process, env={})
+
+    with pytest.raises(RuntimeError) as raised:
+        git.is_ancestor("/wt", "e" * 40, "h" * 40)
+
+    assert f"exit {exit_code}" in str(raised.value) and stderr in str(raised.value)
+
+
 def test_the_git_adapter_prepares_a_worktree_end_to_end(repo, tmp_path):
     git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
     head = sh(repo, "git", "rev-parse", "HEAD")

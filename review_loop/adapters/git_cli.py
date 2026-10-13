@@ -17,6 +17,14 @@ class GitCli:
     def merge_base(self, repo_path: str, one: str, two: str) -> str:
         return self._git(repo_path, "merge-base", one, two)
 
+    def is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
+        # Exit 1 is git's answer, not a failure; anything else is.
+        completed = self.process.run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=path, env=self.env,
+                                     timeout_seconds=self.timeout_seconds)
+        if completed.exit_code not in (0, 1):
+            raise RuntimeError(f"git merge-base --is-ancestor in {path} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
+        return completed.exit_code == 0
+
     def fetch(self, repo_path: str, remote: str, refs: list[str]) -> None:
         self._git(repo_path, "fetch", "--quiet", "--", remote, *refs)
 
@@ -118,11 +126,6 @@ class GitCli:
         parents = self._git(path, "rev-list", "--parents", "-n", "1", sha).split()[1:]
         message = self._git(path, "log", "-1", "--format=%B", sha)
         return (parents[0] if parents else "", message)
-
-    def is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
-        completed = self.process.run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=path, env=self.env,
-                                     timeout_seconds=self.timeout_seconds)
-        return completed.exit_code == 0
 
     def push_guarded(self, path: str, url: str, sha: str, remote_branch: str, expected_remote_sha: str) -> Result[str, str]:
         """Push one verified commit to one branch: the remote must still show the expected parent, the push

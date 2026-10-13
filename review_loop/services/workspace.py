@@ -48,7 +48,8 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
     """`loop_tree` is the tree the loop last left in the worktree. A dirty worktree holding exactly that tree is the loop's
     own unverified fix: it is kept as a patch at `discarded_patch_path` and discarded. Any other dirty tree pauses. A clean
     worktree at a commit other than the adopted head is reset only when that commit is one of `own_heads`, the commits the
-    run recorded, or its tree is `loop_tree`; otherwise someone committed there, and it pauses.
+    run recorded, its tree is `loop_tree`, or the adopted head descends from it (an earlier run of the pull request left
+    it there, and the branch already has it); otherwise someone committed there, and it pauses.
     `on_discard` records the patch before the worktree is reset or any prepare command runs, so a failure after it
     cannot lose the receipt."""
     path = workspace_path(repo, run.pr_number)
@@ -67,7 +68,7 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
                 on_discard(str(discarded_patch_path))
             git.stage_all_and_tree_hash(path)  # staged, the fix's new files are removed by the reset as well
             discarded = str(discarded_patch_path)
-        elif git.head_sha(path) != run.head_sha and not _owned_commit(git, path, own_heads, loop_tree):
+        elif git.head_sha(path) != run.head_sha and not _owned_commit(git, path, run.head_sha, own_heads, loop_tree):
             return Err(WorkspaceProblem.UNEXPECTED_COMMIT)
         git.reset_hard(path, run.head_sha)
     else:
@@ -82,8 +83,12 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
     return Ok(WorkspaceReady(path=path, local_branch=branch, env=env, discarded_patch=discarded))
 
 
-def _owned_commit(git: GitClient, path: str, own_heads: Collection[str], loop_tree: str) -> bool:
-    return git.head_sha(path) in own_heads or (bool(loop_tree) and git.working_tree_hash(path) == loop_tree)
+def _owned_commit(git: GitClient, path: str, adopted_head: str, own_heads: Collection[str], loop_tree: str) -> bool:
+    head = git.head_sha(path)
+    if head in own_heads or (bool(loop_tree) and git.working_tree_hash(path) == loop_tree):
+        return True
+    # A clean worktree behind the branch holds nothing the branch lacks, so resetting it forward loses nothing.
+    return git.is_ancestor(path, head, adopted_head)
 
 
 def _run_prepare(commands: list[list[str]], process: ProcessRunner, cwd: str, env: dict[str, str], timeout_seconds: int) -> tuple[bool, str]:
