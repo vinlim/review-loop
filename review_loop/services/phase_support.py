@@ -15,6 +15,7 @@ from review_loop.config.settings import RepositoryConfig, Settings
 from review_loop.engine.env import sanitize_env
 from review_loop.engine.findings import FindingState, IllegalTransition, Severity, is_open_required, transition
 from review_loop.engine.pull_url import parse_pull_url
+from review_loop.engine.prompts import fill_template
 from review_loop.repositories import decisions as decisions_repo
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import phases as phases_repo
@@ -252,13 +253,19 @@ def outcome(findings: list[Finding]) -> Outcome:
     return Outcome.COMPLETE
 
 
+# Placeholder name to prompt file: the writing rules for anything bound for the PR, kept in one file.
+SHARED_BLOCKS = {"posted_text": "posted-text"}
+
+
 def pull_values(pull: PullRequest, run: Run) -> dict[str, str]:
     return {"pr_number": str(run.pr_number), "pr_url": run.pr_url, "pr_title": pull.title, "head_branch": run.head_ref,
             "head_sha": run.head_sha, "base_branch": run.base_ref, "base_sha": run.base_sha}
 
 
 def template(deps: Deps, name: str) -> str:
-    return (deps.prompts_dir / f"{name}.md").read_text()
+    """A phase prompt with the blocks every prompt shares filled in; the phase fills the rest."""
+    shared = {key: (deps.prompts_dir / f"{file}.md").read_text().strip() for key, file in SHARED_BLOCKS.items()}
+    return fill_template((deps.prompts_dir / f"{name}.md").read_text(), shared, partial=True)
 
 
 def pass_dir(deps: Deps, run: Run, pass_no: int) -> Path:

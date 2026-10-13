@@ -137,6 +137,7 @@ def test_the_first_review_stores_findings_with_ids_and_moves_to_assessing(settin
     assert request.phase == "review" and request.tools_policy == "read-only" and request.cwd == run.worktree_path
     assert request.schema_path.endswith("schemas/review.json")
     assert "{{" not in request.prompt and "pull request #1004" in request.prompt
+    assert "No em dashes" in request.prompt  # the shared rules for text bound for the PR reach every agent
     pass_dir = tmp_path / "runs" / run.id / "pass-1"
     assert (pass_dir / "packet.md").exists() and (pass_dir / "diff.patch").read_text().startswith("diff --git")
     assert "## Active findings" not in (pass_dir / "packet.md").read_text()

@@ -15,4 +15,6 @@ Position B: {{position_b}}
 Read the code at the paths named, and whatever it calls. Decide which position better protects
 the stated behaviour within the contract, or `neither` if both fail it. Tie the rationale to
 evidence with file:line. State the residual risk under the position you choose. Judge the arguments
-only; do not guess who holds which position.
+only; do not guess who holds which position. Your rationale is quoted in the final report on the PR.
+
+{{posted_text}}

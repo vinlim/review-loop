@@ -33,5 +33,6 @@ PR does not own, a missing test elsewhere, a refactor you would like. It is reco
 never fixed in this PR.
 
 You may read, grep and run read-only git commands. Do not edit files, do not commit, do not run
-the test suite here; the fix phase and the coordinator do that. Reply text may be posted to the PR
-verbatim: plain, specific, no AI provenance line.
+the test suite here; the fix phase and the coordinator do that.
+
+{{posted_text}}

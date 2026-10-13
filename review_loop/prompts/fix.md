@@ -18,6 +18,8 @@ Rules:
 - No refactors, no adjacent fixes, no scope beyond the list. A finding you decide not to change
   goes in `not_changed` with the reason.
 - Do not commit, do not push, do not run `gh`. The coordinator runs the formatter and the checks
-  and commits with your `commit_title` and `commit_body`. No attribution trailers anywhere.
+  and commits with your `commit_title` and `commit_body`.
 - Follow the project's instruction files. Run the project's targeted tests yourself for confidence
   ({{test_hint}}) and report them in `tests_run`; the coordinator's own run is the one that counts.
+
+{{posted_text}}

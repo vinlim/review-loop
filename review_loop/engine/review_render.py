@@ -11,7 +11,8 @@ def render_review_body(review: dict, findings: list[tuple[str, dict]], marker: s
         f"Verdict: {VERDICT_TEXT.get(review['verdict'], review['verdict'])}",
         f"Risk Profile: {review['risk']}",
         f"Summary: {review['summary']}", "",
-        f"Contract: owns {review['contract']['owns']}. Does not own {review['contract']['does_not_own']}.", "",
+        f"Owns: {_sentence(review['contract']['owns'])}",
+        f"Does not own: {_sentence(review['contract']['does_not_own'])}", "",
         "DETAILED FEEDBACK", "",
     ]
     detailed = [render_finding_comment(fid, finding, "") for fid, finding in findings if fid not in inline_ids]
@@ -22,7 +23,7 @@ def render_review_body(review: dict, findings: list[tuple[str, dict]], marker: s
     else:
         lines.append("No actionable findings.")
     for entry in review.get("resolved_prior", []):
-        lines.append(f"\nPrior {entry['id']}: {entry['resolution']}. {entry['note']}".rstrip())
+        lines.append(f"\nPrior {entry['id']}: {entry['resolution'].replace('_', ' ')}. {entry['note']}".rstrip())
     for question in review.get("questions", []):
         lines.append(f"\n[QUESTION] {question['id']}{' (blocking)' if question.get('blocking') else ''}: {question['text']}")
     if review.get("verification"):
@@ -37,7 +38,7 @@ def render_finding_comment(finding_id: str, finding: dict, marker: str) -> str:
         f"File: {finding['file']}" if finding.get("file") else "File: (none)",
         f"Severity: [{finding['severity']}]",
         f"Location: Line {finding['line']}" + (f" ({finding['symbol']})" if finding.get("symbol") else ""),
-        f"Finding: {finding['title']}. {finding['finding']}",
+        f"Finding: {_sentence(finding['title'])} {finding['finding']}".rstrip(),
         f"Protected behaviour: {finding['protected_behaviour']}",
         f"Evidence: {finding['evidence']}",
         f"Recommendation: {finding['recommendation']}",
@@ -51,3 +52,11 @@ def render_finding_comment(finding_id: str, finding: dict, marker: str) -> str:
     if marker:
         lines.append(marker)
     return "\n".join(lines) + "\n"
+
+
+def _sentence(text: str) -> str:
+    """One full stop at the end, whatever the reviewer put there; the text inside is posted as written."""
+    text = text.strip()
+    if not text.rstrip(".") or text.endswith(("?", "!")):
+        return text
+    return f"{text.rstrip('.')}."
