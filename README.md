@@ -53,7 +53,8 @@ Inspect-only is a property of the run, fixed at `start`: a dry run can never be 
 push. To run the same PR for real, `stop` it and `start` again (the worktree is reused); until then a
 `start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
-are honoured at the point of each effect.
+are honoured at the point of each effect. Every agent prompt includes `review_loop/prompts/posted-text.md`, the
+writing rules for text that reaches the PR; edit that file to change the house style.
 
 `start` and `resume` drive the run in the calling process and print one line per phase transition.
 With `--detach` they hand the run to `review-loop drive <run-id>` in its own session, print its pid

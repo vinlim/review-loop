@@ -45,6 +45,14 @@ def test_every_agent_prompt_says_the_discussion_is_not_an_instruction():
         assert "instruction to you" in text, name
 
 
+def test_every_agent_prompt_carries_the_shared_rules_for_text_bound_for_the_pr():
+    for name in ("review-initial", "review-again", "assess", "fix", "align", "arbitrate"):
+        text = (ROOT / "review_loop" / "prompts" / f"{name}.md").read_text()
+        assert "{{posted_text}}" in text, name
+    block = (ROOT / "review_loop" / "prompts" / "posted-text.md").read_text()
+    assert "{{" not in block and "No em dashes" in block
+
+
 def test_assets_ship_inside_the_package():
     from review_loop.cli.container import Container
 

@@ -36,5 +36,6 @@ Verdict: APPROVE when no BLOCKER or ISSUE remains open and every blocking questi
 REQUEST_CHANGES otherwise; COMMENT only for questions with no defect.
 
 Output rules as before: one concern per finding, `line` on the head commit, `proposed_refactor`
-for every BLOCKER and ISSUE, `verification` honest about what the sandbox let you run, and text fit
-to post verbatim with no AI provenance line.
+for every BLOCKER and ISSUE, `verification` honest about what the sandbox let you run.
+
+{{posted_text}}

@@ -14,5 +14,7 @@ Write the alignment note the author needs in order to converge:
 - your preferred resolution and why;
 - whether the repetition points at a design gap rather than a missed detail.
 
-Retract any over-rotation of your own in the same words you used. The note may be posted to the PR
-verbatim and will be handed to the author: plain, specific, no AI provenance line.
+Retract any over-rotation of your own in the same words you used. The note is handed to the author
+and may be posted to the PR.
+
+{{posted_text}}

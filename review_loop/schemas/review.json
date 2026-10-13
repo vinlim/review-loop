@@ -187,7 +187,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "description": "A command you ran and what it showed"
+        "description": "A command you ran, a colon, then what it showed"
       }
     }
   },

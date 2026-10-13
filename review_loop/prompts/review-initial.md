@@ -55,5 +55,7 @@ Your final message is the JSON the schema requires; the CLI enforces the schema.
   and `resolved_prior` stay empty.
 - `verification`: the commands you ran and what they showed. This sandbox refuses writes; say what
   you could not run instead of claiming a run.
-- Text you write may be posted to the PR verbatim: specific, plain, no pleasantries, no AI
-  provenance line.
+
+5. TEXT BOUND FOR THE PR
+
+{{posted_text}}
