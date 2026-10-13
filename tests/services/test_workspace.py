@@ -254,6 +254,21 @@ def test_a_clean_worktree_holding_someone_elses_commit_is_never_reset(settings, 
     assert process.calls == []
 
 
+def test_a_clean_worktree_left_at_an_earlier_head_of_the_pull_request_is_reset_to_the_adopted_head(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    path = str(repo.worktree_root / "webapp-1004")
+    git.worktrees.add(path)
+    git.branches[path] = "review-loop/pr-1004"
+    git.heads[path] = "e" * 40  # where an earlier run of this pull request ended; the branch has moved on since
+    git.ancestors["h" * 40] = {"e" * 40}
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state", base_env={"PATH": "/usr/bin"},
+                               changed_paths=[])
+
+    assert result.ok and ("reset_hard", path, "h" * 40) in git.calls
+    assert ("is_ancestor", path, "e" * 40, "h" * 40) in git.calls
+
+
 def test_a_clean_worktree_at_the_loops_own_commit_is_reset_to_the_adopted_head(settings, tmp_path):
     log, git, process, repo = make(settings, tmp_path)
     path = str(repo.worktree_root / "webapp-1004")

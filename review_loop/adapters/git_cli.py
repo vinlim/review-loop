@@ -17,6 +17,14 @@ class GitCli:
     def merge_base(self, repo_path: str, one: str, two: str) -> str:
         return self._git(repo_path, "merge-base", one, two)
 
+    def is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
+        # Exit 1 is git's answer, not a failure; anything else is.
+        completed = self.process.run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=path, env=self.env,
+                                     timeout_seconds=self.timeout_seconds)
+        if completed.exit_code not in (0, 1):
+            raise RuntimeError(f"git merge-base --is-ancestor in {path} failed (exit {completed.exit_code}): {completed.stderr.strip()}")
+        return completed.exit_code == 0
+
     def fetch(self, repo_path: str, remote: str, refs: list[str]) -> None:
         self._git(repo_path, "fetch", "--quiet", "--", remote, *refs)
 

@@ -32,6 +32,18 @@ def repo(tmp_path):
     return local
 
 
+def test_the_git_adapter_tells_an_earlier_commit_from_a_stranger(repo):
+    first = sh(repo, "git", "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("two\n")
+    sh(repo, "git", "commit", "-q", "-am", "two")
+    second = sh(repo, "git", "rev-parse", "HEAD")
+    git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
+
+    assert git.is_ancestor(str(repo), first, second)
+    assert git.is_ancestor(str(repo), second, second)
+    assert not git.is_ancestor(str(repo), second, first)
+
+
 def test_the_git_adapter_prepares_a_worktree_end_to_end(repo, tmp_path):
     git = GitCli(SubprocessRunner(), env={"PATH": os.environ["PATH"]})
     head = sh(repo, "git", "rev-parse", "HEAD")

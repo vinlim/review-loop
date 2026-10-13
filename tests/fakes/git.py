@@ -3,6 +3,7 @@ class FakeGit:
 
     def __init__(self, log: list | None = None):
         self.merge_bases: dict[tuple[str, str], str] = {}
+        self.ancestors: dict[str, set[str]] = {}  # descendant sha -> the shas reachable from it
         self.worktrees: set[str] = set()
         self.clean: dict[str, bool] = {}
         self.changed: list[str] = ["app/X.php"]
@@ -31,6 +32,10 @@ class FakeGit:
     def merge_base(self, repo_path: str, one: str, two: str) -> str:
         self._record("merge_base", repo_path, one, two)
         return self.merge_bases.get((one, two), "m" * 40)
+
+    def is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
+        self._record("is_ancestor", path, ancestor, descendant)
+        return ancestor in self.ancestors.get(descendant, set())
 
     def fetch(self, repo_path: str, remote: str, refs: list[str]) -> None:
         self._record("fetch", repo_path, remote, list(refs))
