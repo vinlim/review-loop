@@ -66,6 +66,17 @@ def test_prepare_fetches_adds_the_worktree_then_runs_the_prepare_command_in_a_gu
     assert result.value.path == expected_path and result.value.local_branch == "review-loop/pr-1004"
 
 
+def test_prepare_commands_see_the_configured_environment_with_the_pull_request_number(settings, tmp_path):
+    log, git, process, repo = make(settings, tmp_path)
+    repo = replace(repo, workspace=replace(repo.workspace, env={"DB_DATABASE": "webapp_test_{pr}"}))
+
+    result = prepare_workspace(run_for(), repo, git=git, process=process, state_dir=tmp_path / "state",
+                               base_env={"PATH": "/usr/bin", "DB_DATABASE": "webapp"}, changed_paths=[])
+
+    assert result.ok
+    assert process.calls[0]["env"]["DB_DATABASE"] == "webapp_test_1004"
+
+
 def test_prepare_refuses_pushes_from_its_worktree_and_leaves_the_main_checkout_push_url_alone(settings, tmp_path):
     repo = settings.repositories["webapp"]
     head = real_checkout(repo.local_path, tmp_path / "origin.git")

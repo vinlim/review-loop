@@ -29,6 +29,7 @@ class WorkspaceConfig:
     prepare: list[list[str]]
     prepare_when_paths_match: dict[str, list[list[str]]] = field(default_factory=dict)
     sanitize_env: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)  # set after sanitize_env strips; "{pr}" becomes the pull request number
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,7 @@ def _workspace(reader: _Reader, workspace: dict[str, Any], prefix: str) -> Works
         "prepare_when_paths_match": {pattern: reader.commands(by_path, pattern, f"{prefix}.prepare_when_paths_match")
                                      for pattern in by_path},
         "sanitize_env": reader.string_list(workspace, "sanitize_env", prefix, default=[]),
+        "env": reader.string_table(workspace, "env", prefix, default={}),
     }
     reader.reject_unknown(workspace, values, prefix)
     return WorkspaceConfig(**values)
@@ -251,6 +253,14 @@ class _Reader:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise self._fail(key, prefix, "must be an array of strings")
         return list(value)
+
+    def string_table(self, table: dict[str, Any], key: str, prefix: str, default: dict[str, str] | None = None) -> dict[str, str]:
+        value = table.get(key, default)
+        if value is None:
+            raise self._fail(key, prefix, "is required")
+        if not isinstance(value, dict) or not all(isinstance(item, str) for item in value.values()):
+            raise self._fail(key, prefix, "must be a table of strings")
+        return dict(value)
 
     def integer_list(self, table: dict[str, Any], key: str, prefix: str, default: list[int] | None = None) -> list[int]:
         value = table.get(key, default)

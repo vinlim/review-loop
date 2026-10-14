@@ -74,7 +74,7 @@ def prepare_workspace(run: Run, repo: RepositoryConfig, *, git: GitClient, proce
     else:
         git.worktree_add(str(repo.local_path), path, branch, run.head_sha)
     git.set_worktree_push_url(path, "origin", "DISABLED")
-    env = sanitize_env(base_env, repo.workspace.sanitize_env, str(ensure_shims(state_dir)))
+    env = sanitize_env(base_env, repo.workspace.sanitize_env, str(ensure_shims(state_dir)), repo.workspace.env, str(run.pr_number))
     prepared, log = _run_prepare(prepare_commands(repo, changed_paths), process, path, env, timeout_seconds)
     if log_path is not None:
         log_path.write_text(log)

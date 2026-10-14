@@ -106,7 +106,7 @@ def phase_verify(deps: Deps, run: Run) -> Run:
         run.extra["scripts_changed"] = sorted(touched_scripts)
         return pause(deps, run, PauseReason.SCRIPTS_CHANGED, resume_state=RunState.VERIFYING)
     attempt_no = len([r for r in verification_repo.list_results(deps.conn, run.id) if r["pass_no"] == run.pass_no]) + 1
-    checks = _run_checks(deps, run, repo_config, project_env(deps, repo_config))
+    checks = _run_checks(deps, run, repo_config, project_env(deps, repo_config, run))
     log_path = directory / f"verify-{attempt_no}.log"
     log_path.write_text(checks.log)
     verification_repo.add_result(deps.conn, run.id, run.pass_no, attempt_no, checks.tree, checks.commands, checks.status, str(log_path), now(deps))
