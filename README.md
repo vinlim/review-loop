@@ -40,7 +40,8 @@ A repository's `workspace.sanitize_env` patterns strip more variables from the e
 prepare command, check and agent runs in, and `workspace.env` sets values after that strip, with
 `{pr}` replaced by the pull request number. `env = { DB_DATABASE = "app_test_{pr}" }` gives each pull
 request's worktree its own test database, which a prepare command can create. A configured value
-cannot change `PATH` or the git and `gh` guards.
+cannot change `PATH` or the git and `gh` guards. A value for a name the tool always strips, such as
+`GH_TOKEN` or `DB_PASSWORD`, is dropped.
 
 ## Use
 

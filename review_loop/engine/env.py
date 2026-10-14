@@ -15,10 +15,14 @@ GIT_GUARDS = (("remote.origin.pushurl", "DISABLED"), ("push.default", "nothing")
 def sanitize_env(base_env: dict[str, str], patterns: list[str], shims_dir: str, overrides: Mapping[str, str] | None = None,
                  pr: str = "") -> dict[str, str]:
     """`overrides` are the repository's configured values, with "{pr}" filled in. They land after the patterns strip and before
-    the guards below, so a configured value can restore a stripped variable but never loosen a guard."""
+    the guards below, so a configured value can restore a variable the repository's patterns stripped, but never set a name
+    in ALWAYS_REMOVED or loosen a guard."""
     removed = list(ALWAYS_REMOVED) + list(patterns)
     env = {key: value for key, value in base_env.items() if not any(fnmatch.fnmatchcase(key, pattern) for pattern in removed)}
-    env.update({key: value.replace("{pr}", pr) for key, value in (overrides or {}).items()})
+    env.update({key: value.replace("{pr}", pr) for key, value in (overrides or {}).items()
+                if not any(fnmatch.fnmatchcase(key, pattern) for pattern in ALWAYS_REMOVED)})
+    # Git applies the `git -c` settings this carries after the GIT_CONFIG_COUNT guards, so it goes whether inherited or configured.
+    env.pop("GIT_CONFIG_PARAMETERS", None)
     env["PATH"] = f"{shims_dir}:{base_env.get('PATH', '')}"
     env["GIT_CONFIG_GLOBAL"] = f"{shims_dir}/empty-gitconfig"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
