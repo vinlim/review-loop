@@ -44,3 +44,19 @@ def test_a_credential_helper_in_the_repository_config_answers_nobody_in_the_sani
     guarded = subprocess.run(["git", "credential", "fill"], cwd=repo, input=ask, capture_output=True, text=True, env=env)
 
     assert "hunter2" not in guarded.stdout and "hunter2" not in guarded.stderr
+
+
+def test_a_configured_value_restores_a_stripped_variable_with_the_pull_request_number_filled_in():
+    env = sanitize_env({"PATH": "/usr/bin", "DB_DATABASE": "app"}, ["DB_*"], "/shims",
+                       {"DB_DATABASE": "app_test_{pr}", "LABEL": "{x}-{pr}"}, "22")
+
+    assert env["DB_DATABASE"] == "app_test_22"
+    assert env["LABEL"] == "{x}-22", "only {pr} is a placeholder; other braces stay as written"
+
+
+def test_a_configured_value_cannot_loosen_the_path_or_git_guards():
+    env = sanitize_env({"PATH": "/usr/bin"}, [], "/shims",
+                       {"PATH": "/evil", "GIT_CONFIG_GLOBAL": "/evil/gitconfig", "GIT_CONFIG_COUNT": "0"}, "22")
+
+    assert env["PATH"] == "/shims:/usr/bin"
+    assert env["GIT_CONFIG_GLOBAL"] == "/shims/empty-gitconfig" and env["GIT_CONFIG_COUNT"] == "3"

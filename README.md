@@ -36,6 +36,12 @@ A registered repository needs per-worktree config, because each tool worktree ke
 its own config file, out of the shared `.git/config` every checkout reads. Turn it on once with
 `git -C <checkout> config extensions.worktreeConfig true`; `doctor` checks it.
 
+A repository's `workspace.sanitize_env` patterns strip more variables from the environment every
+prepare command, check and agent runs in, and `workspace.env` sets values after that strip, with
+`{pr}` replaced by the pull request number. `env = { DB_DATABASE = "app_test_{pr}" }` gives each pull
+request's worktree its own test database, which a prepare command can create. A configured value
+cannot change `PATH` or the git and `gh` guards.
+
 ## Use
 
 ```bash

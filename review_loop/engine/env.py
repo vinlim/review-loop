@@ -4,6 +4,7 @@ The author CLI's login travels with its adapter, never through this environment.
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Mapping
 
 ALWAYS_REMOVED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY",
                   "ANTHROPIC_API_KEY", "AWS_*", "*_SECRET*", "*PASSWORD*", "*_API_KEY")
@@ -11,9 +12,13 @@ ALWAYS_REMOVED = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "CLAUDE_COD
 GIT_GUARDS = (("remote.origin.pushurl", "DISABLED"), ("push.default", "nothing"), ("credential.helper", ""))
 
 
-def sanitize_env(base_env: dict[str, str], patterns: list[str], shims_dir: str) -> dict[str, str]:
+def sanitize_env(base_env: dict[str, str], patterns: list[str], shims_dir: str, overrides: Mapping[str, str] | None = None,
+                 pr: str = "") -> dict[str, str]:
+    """`overrides` are the repository's configured values, with "{pr}" filled in. They land after the patterns strip and before
+    the guards below, so a configured value can restore a stripped variable but never loosen a guard."""
     removed = list(ALWAYS_REMOVED) + list(patterns)
     env = {key: value for key, value in base_env.items() if not any(fnmatch.fnmatchcase(key, pattern) for pattern in removed)}
+    env.update({key: value.replace("{pr}", pr) for key, value in (overrides or {}).items()})
     env["PATH"] = f"{shims_dir}:{base_env.get('PATH', '')}"
     env["GIT_CONFIG_GLOBAL"] = f"{shims_dir}/empty-gitconfig"
     env["GIT_CONFIG_NOSYSTEM"] = "1"

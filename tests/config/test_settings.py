@@ -217,6 +217,7 @@ trusted_logins = ["octocat"]
 [repositories.webapp.workspace]
 prepare = [["composer", "install"]]
 sanitize_env = ["DB_*"]
+env = { DB_DATABASE = "webapp_test_{pr}" }
 
 [repositories.webapp.workspace.prepare_when_paths_match]
 "^resources/" = [["npm", "ci"], ["npm", "run", "build"]]
@@ -233,7 +234,7 @@ format = [["vendor/bin/pint", "--dirty"]]
         name="webapp", remote="https://github.com/acme/webapp.git", local_path=Path("/home/dev/webapp"),
         worktree_root=Path("/home/dev/worktrees"), instruction_files=["AGENTS.md"], allowed_pr_authors=["vinlim", "octocat"],
         trusted_logins=["octocat"],
-        workspace=WorkspaceConfig(prepare=[["composer", "install"]], sanitize_env=["DB_*"],
+        workspace=WorkspaceConfig(prepare=[["composer", "install"]], sanitize_env=["DB_*"], env={"DB_DATABASE": "webapp_test_{pr}"},
                                   prepare_when_paths_match={"^resources/": [["npm", "ci"], ["npm", "run", "build"]]}),
         verification=VerificationConfig(required=[["php", "artisan", "test"]], unavailable_exit_codes=[3, 4],
                                         format=[["vendor/bin/pint", "--dirty"]]),
@@ -276,6 +277,16 @@ def test_prepare_when_paths_match_given_as_an_array_is_rejected_as_not_a_table(t
         load_settings(path)
 
     assert "repositories.webapp.workspace.prepare_when_paths_match must be a table" in str(raised.value)
+
+
+@pytest.mark.parametrize("line", ['env = ["DB_DATABASE=webapp_test"]', "env = { DB_PORT = 5432 }"])
+def test_a_workspace_env_other_than_a_table_of_strings_is_rejected(tmp_path, line):
+    path = write(tmp_path, with_line("repositories.webapp.workspace", line))
+
+    with pytest.raises(ConfigError) as raised:
+        load_settings(path)
+
+    assert "repositories.webapp.workspace.env must be a table of strings" in str(raised.value)
 
 
 def test_a_repository_that_is_not_a_table_is_rejected(tmp_path):

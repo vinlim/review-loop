@@ -45,7 +45,7 @@ def probe_agents(agents: dict[str, Any], repo: RepositoryConfig, *, state_dir: P
     """One probe per role; roles that share an agent, model and effort share the answer. `answers` carries answers across
     calls so a doctor over several repositories asks each distinct choice once."""
     answers = answers if answers is not None else {}
-    env = sanitize_env(base_env, repo.workspace.sanitize_env, str(ensure_shims(state_dir)))
+    env = sanitize_env(base_env, repo.workspace.sanitize_env, str(ensure_shims(state_dir)), repo.workspace.env, "probe")
     cwd = _probe_workspace(state_dir, process, env)
     probes = []
     for role, choice in repo.review.agents().items():

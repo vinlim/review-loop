@@ -86,7 +86,9 @@ configuration emptied, and `origin` pushes blocked for every repository the proc
 including temporary ones a test creates. The Claude Code login, `CLAUDE_CODE_OAUTH_TOKEN`, is
 removed as well: the coordinator takes it out of its own environment at startup and adds it back
 only to the Claude agent's process, so no check, prepare command or other agent receives it.
-Network access is not blocked and other variables pass through. So register only a check that is
+Network access is not blocked and other variables pass through, except those the repository's
+`workspace.sanitize_env` patterns strip; `workspace.env` then sets configured values, with `{pr}` as
+the pull request number. So register only a check that is
 safe to run against code the PR controls, and expect a suite that pushes, even to a local remote,
 to fail there although it passes in a shell.
 

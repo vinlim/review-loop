@@ -153,6 +153,20 @@ def test_passing_checks_commit_without_trailers_push_with_the_expected_parent_an
     assert check_call["cwd"] == run.worktree_path and "DB_URL" not in check_call["env"]
 
 
+def test_agents_and_checks_see_the_configured_environment_for_their_pull_request(settings, tmp_path):
+    repo = settings.repositories["webapp"]
+    workspace = dataclasses.replace(repo.workspace, env={"DB_DATABASE": "webapp_test_{pr}"})
+    h = harness(dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo, workspace=workspace)}), tmp_path)
+
+    run = step(h.deps, to_verifying(h))
+
+    assert run.state == RunState.PUBLISHING
+    check_call = next(call for call in h.process.calls if call["argv"] == [".claude/run-tests.sh", "changed"])
+    assert check_call["env"]["DB_DATABASE"] == "webapp_test_1004"
+    requests = h.reviewer.requests + h.author.requests
+    assert requests and all(request.env["DB_DATABASE"] == "webapp_test_1004" for request in requests)
+
+
 def test_a_pytest_check_runs_with_the_worktree_leading_pythonpath_so_its_child_processes_test_the_worktree(settings, tmp_path):
     repo = settings.repositories["webapp"]
     pytest_check = ["/opt/venv/bin/python", "-m", "pytest", "-q"]
