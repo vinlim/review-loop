@@ -473,6 +473,10 @@ def phase_assess(deps: Deps, run: Run) -> Run:
     directory = pass_dir(deps, run, run.pass_no)
     findings = findings_repo.list_findings(deps.conn, run.id)
     active_ids = [finding.id for finding in findings if finding.state == FindingState.OPEN]
+    if not active_ids:
+        # A pass can come here for findings past assessment (awaiting alignment, or accepted by a decision). The validator
+        # refuses a disposition for any of them, so the author is not asked and they go on to the phase that handles them.
+        return _leave_assessment(deps, run)
     prompt = _assess_prompt(deps, run, repo_config, directory, findings, active_ids)
     phase_request = request(deps, repo_config, run, "assess", prompt, "assessment", directory / "assess", "read-only",
                             repo_config.review.author_model, repo_config.review.author_effort, resume=author_resume(run, repo_config))
@@ -486,6 +490,10 @@ def phase_assess(deps: Deps, run: Run) -> Run:
     _apply_dispositions(deps, run, assessment)
     _file_adjacent(deps, run, assessment)
     run.extra[f"assess_summary_pass_{run.pass_no}"] = assessment["summary"]
+    return _leave_assessment(deps, run)
+
+
+def _leave_assessment(deps: Deps, run: Run) -> Run:
     next_state = _after_assess(deps, run)
     if inspect_only(deps, run):
         return pause(deps, run, PauseReason.INSPECT_ONLY, resume_state=next_state)

@@ -2,7 +2,7 @@ from review_loop.repositories import decisions as decisions_repo
 from review_loop.repositories import findings as findings_repo
 from review_loop.services.run_coordinator import step
 from review_loop.types.run import RunState
-from tests.services.test_coordinator_m3 import REJECTIONS, harness, verified
+from tests.services.test_coordinator_m3 import FIX, LOGGER, REJECTIONS, harness, verified
 from tests.services.test_coordinator_phases import APPROVE, REVIEW_984, with_review
 
 NOTE = {"oscillating": True, "design_gap": False, "contract": "The PR owns URL scrubbing.", "invariant": "No credential survives scrubbing.",
@@ -145,6 +145,44 @@ def test_a_needs_alignment_disposition_runs_the_exchange_too(settings, tmp_path)
     run = step(h.deps, run)
 
     assert run.state == RunState.FIXING and h.findings()["R1-F1"].state == "accepted"
+
+
+def to_assessment_with_nothing_open(settings, tmp_path):
+    """R1-F1 is fixed while R1-F2 waits for alignment; the rereview verifies R1-F1 and argues R1-F2 again, which leaves
+    R1-F2 needing alignment, no finding open, and the run in assessment."""
+    h = harness(settings, tmp_path)
+    h.git.working_changed = [LOGGER, "services/notifier/src/logger.test.ts"]
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply({"dispositions": [
+        {"finding_id": "R1-F1", "disposition": "accept", "reply": "Confirmed.", "evidence": "logger.ts:26", "intended_fix": "redact once"},
+        {"finding_id": "R1-F2", "disposition": "needs_alignment", "reply": "Turns on how far the bound reaches.", "evidence": "", "intended_fix": ""}],
+        "adjacent_findings": [], "summary": "one accepted, one for alignment"})
+    run = step(h.deps, run)
+    h.author.reply({**FIX, "changes": FIX["changes"][:1]})
+    for _ in ("fix", "verify", "publish"):
+        run = step(h.deps, run)
+    h.reviewer.reply({**APPROVE, "verdict": "REQUEST_CHANGES", "resolved_prior": [
+        {"id": "R1-F1", "resolution": "verified", "note": "redacted once"},
+        {"id": "R1-F2", "resolution": "disputed", "note": "New evidence: the batch path overflows too."}]})
+    run = step(h.deps, run)
+    assert run.state == RunState.ASSESSING and h.findings()["R1-F2"].state == "needs_alignment"
+    return h, run
+
+
+def test_an_assessment_with_no_open_finding_asks_the_author_nothing_and_aligns_the_waiting_finding(settings, tmp_path):
+    h, run = to_assessment_with_nothing_open(settings, tmp_path)
+    asked = len(h.author.requests)
+    answer = {"dispositions": [{"finding_id": "R1-F2", "disposition": "accept", "reply": "Accepted on the new evidence.", "evidence": "X.php:9",
+                                "intended_fix": "bound the batch path"}], "adjacent_findings": [], "summary": "R1-F2 accepted"}
+    h.author.reply(answer)
+    h.author.reply(answer)
+
+    run = step(h.deps, run)
+
+    assert run.state == RunState.ALIGNING
+    assert len(h.author.requests) == asked
 
 
 SPLIT = {"decision": "A", "rationale": "Leak is real.", "residual": "none"}
