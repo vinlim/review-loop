@@ -18,3 +18,11 @@ def test_the_assessment_summary_stands_when_there_is_one():
     body = render_summary(1004, 2, "abc123456" + "0" * 31, "one accepted", rows, "passed", [], 0, [], MARKER)
 
     assert "\n\none accepted\n\n" in body and "on a developer decision" not in body
+
+
+def test_a_fix_decision_without_its_commit_is_summarised_as_not_made_in_this_pass():
+    rows = [{"id": "R1-F2", "disposition": "decide_fix", "commit": ""}]
+
+    body = render_summary(1004, 2, "abc123456" + "0" * 31, "", rows, "passed", [], 0, [], MARKER)
+
+    assert "Fix decided by a developer, not made in this pass: R1-F2." in body and "Fixed on a developer decision" not in body

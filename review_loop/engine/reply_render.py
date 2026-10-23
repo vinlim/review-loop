@@ -16,6 +16,8 @@ def render_reply(finding: Finding, note: dict, fix_commit: str, verification: st
     lead = DISPOSITION_LEAD.get(disposition, "")
     if disposition in FIXING and fix_commit:
         lead = f"{lead} Fixed in {fix_commit[:9]}."
+    elif disposition == "decide_fix":
+        lead = f"{lead} Not fixed in this pass."
     lines = [lead, "", note.get("reply", "").strip()]
     if note.get("evidence"):
         lines += ["", f"Evidence: {note['evidence'].strip()}"]
@@ -43,11 +45,14 @@ def render_summary(run_pr: int, pass_no: int, head_sha: str, summary: str, rows:
 
 def _decision_summary(rows: list[dict]) -> str:
     """A pass that only acted on a person's decisions has no assessment summary of its own."""
-    fixed = [row["id"] for row in rows if row["disposition"] == "decide_fix"]
+    fixed = [row["id"] for row in rows if row["disposition"] == "decide_fix" and row["commit"]]
+    pending = [row["id"] for row in rows if row["disposition"] == "decide_fix" and not row["commit"]]
     kept = [row["id"] for row in rows if row["disposition"] == "decide_keep"]
     parts = []
     if fixed:
         parts.append(f"Fixed on a developer decision: {', '.join(fixed)}.")
+    if pending:
+        parts.append(f"Fix decided by a developer, not made in this pass: {', '.join(pending)}.")
     if kept:
         parts.append(f"Kept as is on a developer decision: {', '.join(kept)}.")
     return " ".join(parts)
