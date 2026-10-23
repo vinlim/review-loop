@@ -13,6 +13,9 @@ DISPOSITION_LEAD = {"accept": "Accepted.", "reject": "Rejected.", "needs_alignme
                     "unfixed": "Accepted, then not changed.", "developer_fix": "Developer decision: fix.",
                     "developer_keep": "Developer decision: keep.", "alignment_fix": "Alignment decision: fix.",
                     "alignment_keep": "Alignment decision: keep.", "alignment_exception": "Alignment decision: exception."}
+# A fix decided after the pass verified its changes is made in a later pass.
+NOT_MADE = {"developer_fix": "Fix decided by a developer, not made in this pass",
+            "alignment_fix": "Fix decided in alignment, not made in this pass"}
 FIXING = frozenset({"accept", "developer_fix", "alignment_fix"})
 
 
@@ -21,6 +24,8 @@ def render_reply(finding: Finding, note: dict, fix_commit: str, verification: st
     lead = DISPOSITION_LEAD.get(disposition, "")
     if disposition in FIXING and fix_commit:
         lead = f"{lead} Fixed in {fix_commit[:9]}."
+    elif disposition in NOT_MADE:
+        lead = f"{lead} Not fixed in this pass."
     lines = [lead, "", note.get("reply", "").strip()]
     if note.get("evidence"):
         lines += ["", f"Evidence: {note['evidence'].strip()}"]
@@ -52,12 +57,16 @@ def _row_label(disposition: str) -> str:
 
 
 def _decision_summary(rows: list[dict]) -> str:
-    """A pass with no assessment of its own still says what the decisions in it settled."""
+    """A pass with no assessment of its own still says what the decisions in it settled, and which decided fix it did not make."""
     parts = []
     for disposition, phrase in DECISION_SUMMARY.items():
-        ids = [row["id"] for row in rows if row["disposition"] == disposition]
-        if ids:
-            parts.append(f"{phrase}: {', '.join(ids)}.")
+        settled = [row for row in rows if row["disposition"] == disposition]
+        not_made = [row["id"] for row in settled if disposition in NOT_MADE and not row["commit"]]
+        made = [row["id"] for row in settled if row["id"] not in not_made]
+        if made:
+            parts.append(f"{phrase}: {', '.join(made)}.")
+        if not_made:
+            parts.append(f"{NOT_MADE[disposition]}: {', '.join(not_made)}.")
     return " ".join(parts)
 
 

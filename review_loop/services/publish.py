@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from review_loop.engine.discussion import Role, make_marker
 from review_loop.engine.findings import FindingState
-from review_loop.engine.reply_render import FIXING, render_inbox_mirror, render_reply, render_summary
+from review_loop.engine.reply_render import DECISION_SUMMARY, FIXING, render_inbox_mirror, render_reply, render_summary
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
@@ -47,16 +47,17 @@ def phase_publish(deps: Deps, run: Run) -> Run:
 
 def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verification: str) -> tuple[list[dict], list[str]]:
     """One reply per dispositioned finding this pass, in its thread when it has one; the rest go into the summary."""
-    fix_commit = run.extra.get(f"fix_commit_pass_{run.pass_no}", "")
     rows, threadless = [], []
     for finding in findings_repo.list_findings(deps.conn, run.id):
         note = _reply_note(deps, run, finding.id)
         if note is None:
             continue
-        marker = make_marker(Role.AUTHOR, run.id, run.pass_no, "reply", finding.id)
-        fixing = note["disposition"] in FIXING
-        rows.append({"id": finding.id, "disposition": note["disposition"], "commit": fix_commit[:9] if fixing and fix_commit else ""})
-        body = render_reply(finding, note, fix_commit if fixing else "", verification, marker)
+        # A decision can follow the author's reply in the same pass, after that reply was posted, so it has its own marker.
+        kind = "decision" if note["disposition"] in DECISION_SUMMARY else "reply"
+        marker = make_marker(Role.AUTHOR, run.id, run.pass_no, kind, finding.id)
+        commit = _fix_commit(deps, run, finding.id) if note["disposition"] in FIXING else ""
+        rows.append({"id": finding.id, "disposition": note["disposition"], "commit": commit[:9]})
+        body = render_reply(finding, note, commit, verification if commit else "", marker)
         if finding.comment_id is None:
             threadless.append(f"**{finding.id}**: {body.replace(marker, '').strip()}")
         elif not outbox_repo.has_done(deps.conn, run.id, marker):
@@ -67,8 +68,9 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
 
 def _reply_note(deps: Deps, run: Run, finding_id: str) -> dict | None:
     """The latest word on the finding this pass: the author's reply, or a decision that settled it after that reply."""
+    # An author disposition that arrived after a decision is recorded as ignored, and the decision stands.
     events = [e for e in findings_repo.list_events(deps.conn, run.id, finding_id) if e["note"].get("pass") == run.pass_no
-              and ((e["actor"] == "author" and e["note"].get("reply") is not None) or _decided(e))]
+              and ((e["actor"] == "author" and e["note"].get("reply") is not None and not e["note"].get("ignored")) or _decided(e))]
     if not events:
         return None
     latest = events[-1]
@@ -88,6 +90,13 @@ def _decision_reason(event: dict) -> str:
         return note.partition("\n")[2]
     reason = note.removeprefix(f"{DECISION_KINDS[event['to_state']]}: ").strip()
     return f"{reason[:1].upper()}{reason[1:].removesuffix('.')}." if reason else ""
+
+
+def _fix_commit(deps: Deps, run: Run, finding_id: str) -> str:
+    """The commit that fixed this finding in this pass; a fix decided after verification has none yet."""
+    fixed = [e for e in findings_repo.list_events(deps.conn, run.id, finding_id) if e["note"].get("pass") == run.pass_no
+             and e["from_state"] == FindingState.ACCEPTED and e["to_state"] == FindingState.FIXED_PENDING_VERIFICATION]
+    return fixed[-1]["note"].get("commit", "") if fixed else ""
 
 
 def _verification_text(deps: Deps, run: Run) -> str:
