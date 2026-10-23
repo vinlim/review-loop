@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from review_loop.engine.discussion import Role, make_marker
-from review_loop.engine.reply_render import render_inbox_mirror, render_reply, render_summary
+from review_loop.engine.findings import FindingState
+from review_loop.engine.reply_render import FIXING, render_inbox_mirror, render_reply, render_summary
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
@@ -11,6 +12,8 @@ from review_loop.repositories import verification as verification_repo
 from review_loop.services.phase_support import Deps, check_pull_before_effect, inspect_only, pause, publisher as make_publisher, ref, repo, save
 from review_loop.services.publication import ControlLanded, Publisher
 from review_loop.types.run import PauseReason, Run, RunState
+
+DECISIONS = {FindingState.ACCEPTED: "decide_fix", FindingState.REJECTION_ACCEPTED: "decide_keep"}
 
 
 def phase_publish(deps: Deps, run: Run) -> Run:
@@ -50,9 +53,9 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
         if note is None:
             continue
         marker = make_marker(Role.AUTHOR, run.id, run.pass_no, "reply", finding.id)
-        accepted = note["disposition"] == "accept"
-        rows.append({"id": finding.id, "disposition": note["disposition"], "commit": fix_commit[:9] if accepted and fix_commit else ""})
-        body = render_reply(finding, note, fix_commit if accepted else "", verification, marker)
+        fixing = note["disposition"] in FIXING
+        rows.append({"id": finding.id, "disposition": note["disposition"], "commit": fix_commit[:9] if fixing and fix_commit else ""})
+        body = render_reply(finding, note, fix_commit if fixing else "", verification, marker)
         if finding.comment_id is None:
             threadless.append(f"**{finding.id}**: {body.replace(marker, '').strip()}")
         elif not outbox_repo.has_done(deps.conn, run.id, marker):
@@ -62,9 +65,20 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
 
 
 def _reply_note(deps: Deps, run: Run, finding_id: str) -> dict | None:
-    events = [e for e in findings_repo.list_events(deps.conn, run.id, finding_id)
-              if e["actor"] == "author" and e["note"].get("pass") == run.pass_no and e["note"].get("reply") is not None]
-    return events[-1]["note"] if events else None
+    """The latest word on the finding this pass: the author's reply, or a decision a person recorded with `review-loop align`."""
+    events = [e for e in findings_repo.list_events(deps.conn, run.id, finding_id) if e["note"].get("pass") == run.pass_no
+              and ((e["actor"] == "author" and e["note"].get("reply") is not None) or _decided(e))]
+    if not events:
+        return None
+    latest = events[-1]
+    if latest["actor"] == "author":
+        return latest["note"]
+    # The decision file's first line is the verdict, which the disposition already names.
+    return {"disposition": DECISIONS[latest["to_state"]], "reply": latest["note"].get("note", "").partition("\n")[2]}
+
+
+def _decided(event: dict) -> bool:
+    return event["actor"] == "human" and event["from_state"] != event["to_state"] and event["to_state"] in DECISIONS
 
 
 def _verification_text(deps: Deps, run: Run) -> str:
