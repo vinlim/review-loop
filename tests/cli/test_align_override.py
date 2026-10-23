@@ -9,7 +9,7 @@ from review_loop.types.run import PauseReason, RunState
 from tests.cli.test_main import container
 from tests.services.test_alignment import to_assessment_with_nothing_open, to_dispute
 from tests.services.test_coordinator_m3 import FIX, NUMBERS, harness
-from tests.services.test_coordinator_phases import REVIEW_984
+from tests.services.test_coordinator_phases import ASSESS_984, REVIEW_984
 
 
 def test_align_override_records_a_decision_and_settles_the_disputed_findings(settings, tmp_path, capsys):
@@ -215,4 +215,43 @@ def test_a_decision_recorded_after_the_finding_replies_landed_reaches_the_thread
     replies = [write[2] for write in h.github.writes if write[0] == "reply" and write[1] == thread]
     assert len(replies) == 2 and replies[0].startswith("Needs alignment.")
     assert replies[1].startswith("Developer decision: fix.") and "Bound the report by bytes." in replies[1]
+    assert run.state == RunState.REREVIEWING
+
+
+def test_a_decision_on_a_finding_without_a_thread_recorded_after_the_summary_landed_is_posted_once(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    outside_the_diff = findings_repo.get_finding(h.conn, run.id, "R1-F2")
+    outside_the_diff.comment_id = None
+    findings_repo.save_finding(h.conn, run.id, outside_the_diff, h.clock.now().isoformat())
+    h.author.reply({**ONE_FOR_ALIGNMENT, "adjacent_findings": ASSESS_984["adjacent_findings"]})
+    run = step(h.deps, run)
+    h.author.reply({**FIX, "changes": FIX["changes"][:1]})
+    run = step(h.deps, step(h.deps, run))
+    comments = {"n": 0}
+
+    def fail_the_inbox_mirror_once(kind):
+        if kind == "post_comment":
+            comments["n"] += 1
+            if comments["n"] == 2:
+                h.github.on_call = None
+                raise RuntimeError("502 from GitHub")
+
+    h.github.on_call = fail_the_inbox_mirror_once
+    run = step(h.deps, run)
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.GITHUB_ERROR)
+    assert any(write[0] == "post_comment" and write[2].startswith("## Review response, pass 1") for write in h.github.writes)
+    decide_fix_for_r1_f2(settings, tmp_path, h, run.id)
+    run = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), h.clock).value
+
+    run = step(h.deps, run)
+    run.state = RunState.PUBLISHING
+    runs_repo.save_run(h.conn, run)
+    run = step(h.deps, run)
+
+    decisions = [write[2] for write in h.github.writes if write[0] == "post_comment" and "kind=decision finding=R1-F2" in write[2]]
+    assert len(decisions) == 1
+    assert decisions[0].startswith("**R1-F2**: Developer decision: fix.") and "Bound the report by bytes." in decisions[0]
     assert run.state == RunState.REREVIEWING

@@ -57,7 +57,12 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
         commit = _fix_commit(deps, run, finding.id) if note["disposition"] in FIXING else ""
         rows.append({"id": finding.id, "disposition": note["disposition"], "commit": commit[:9]})
         body = render_reply(finding, note, commit, verification if commit else "", marker)
-        if finding.comment_id is None:
+        if finding.comment_id is None and kind == "decision":
+            # The summary may already be posted, so a decision on a finding without a thread is a comment of its own.
+            if not outbox_repo.has_done(deps.conn, run.id, marker):
+                publisher.post(run.id, "reply", {"finding": finding.id}, marker, f"**{finding.id}**: {body}",
+                               lambda cleaned: deps.github.post_comment(pull_ref, cleaned))
+        elif finding.comment_id is None:
             threadless.append(f"**{finding.id}**: {body.replace(marker, '').strip()}")
         elif not outbox_repo.has_done(deps.conn, run.id, marker):
             publisher.post(run.id, "reply", {"finding": finding.id}, marker, body,
