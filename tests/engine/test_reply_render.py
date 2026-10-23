@@ -4,7 +4,7 @@ MARKER = "<!-- review-loop role=author run=r pass=2 kind=summary -->"
 
 
 def test_a_pass_without_an_assessment_summary_says_what_the_developer_decided():
-    rows = [{"id": "R1-F2", "disposition": "decide_fix", "commit": "abc123456"}, {"id": "R1-F3", "disposition": "decide_keep", "commit": ""}]
+    rows = [{"id": "R1-F2", "disposition": "developer_fix", "commit": "abc123456"}, {"id": "R1-F3", "disposition": "developer_keep", "commit": ""}]
 
     body = render_summary(1004, 2, "abc123456" + "0" * 31, "", rows, "passed", [], 0, [], MARKER)
 
@@ -13,7 +13,7 @@ def test_a_pass_without_an_assessment_summary_says_what_the_developer_decided():
 
 
 def test_the_assessment_summary_stands_when_there_is_one():
-    rows = [{"id": "R2-F1", "disposition": "accept", "commit": "abc123456"}, {"id": "R1-F2", "disposition": "decide_fix", "commit": "abc123456"}]
+    rows = [{"id": "R2-F1", "disposition": "accept", "commit": "abc123456"}, {"id": "R1-F2", "disposition": "developer_fix", "commit": "abc123456"}]
 
     body = render_summary(1004, 2, "abc123456" + "0" * 31, "one accepted", rows, "passed", [], 0, [], MARKER)
 
@@ -21,7 +21,7 @@ def test_the_assessment_summary_stands_when_there_is_one():
 
 
 def test_a_fix_decision_without_its_commit_is_summarised_as_not_made_in_this_pass():
-    rows = [{"id": "R1-F2", "disposition": "decide_fix", "commit": ""}]
+    rows = [{"id": "R1-F2", "disposition": "developer_fix", "commit": ""}]
 
     body = render_summary(1004, 2, "abc123456" + "0" * 31, "", rows, "passed", [], 0, [], MARKER)
 

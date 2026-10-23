@@ -105,6 +105,77 @@ def test_a_split_on_a_blocker_ends_the_run_blocked_with_the_report(settings, tmp
     assert "Review blocked" in report and "Arbitration (arbiter 1)" in report and "Arbitration (arbiter 2)" in report
 
 
+def arbitrated(settings, tmp_path, reviewer_choice, author_choice):
+    """The author holds its rejection after the note, and the two arbiters choose as given."""
+    h, run = to_dispute(settings, tmp_path)
+    h.reviewer.reply(NOTE)
+    h.author.reply(disagree("R1-F1"))
+    h.reviewer.reply({"decision": reviewer_choice, "rationale": "r", "residual": "none"})
+    h.author.reply({"decision": author_choice, "rationale": "r", "residual": "none"})
+    return h, step(h.deps, run)
+
+
+def published(h, run, finding_id="R1-F1"):
+    """Publish the pass; returns the run, the finding's thread reply and the round summary."""
+    posted = len(h.github.writes)
+    run = step(h.deps, run)
+    writes = h.github.writes[posted:]
+    replies = {write[1]: write[2] for write in writes if write[0] == "reply"}
+    summary = next(write[2] for write in writes if write[0] == "post_comment" and write[2].startswith("## Review response"))
+    return run, replies[h.findings()[finding_id].comment_id], summary
+
+
+def test_a_fix_decided_by_arbitration_is_published_as_that_decision_with_its_commit(settings, tmp_path):
+    h, run = arbitrated(settings, tmp_path, "A", "B")
+    assert run.state == RunState.FIXING
+    h.author.reply({**FIX, "changes": FIX["changes"][:1]})
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.PUBLISHING
+
+    run, reply, summary = published(h, run)
+
+    commit = run.extra["fix_commit_pass_2"][:9]
+    assert reply.startswith(f"Alignment decision: fix. Fixed in {commit}.\n\nBoth arbiters agree.") and "Still no" not in reply
+    assert "Fixed on an alignment decision: R1-F1." in summary and f"| R1-F1 | alignment decision: fix | {commit} |" in summary
+
+
+def test_a_fix_decision_standing_for_a_re_raised_finding_is_published_as_that_decision(settings, tmp_path):
+    h, run = arbitrated(settings, tmp_path, "A", "B")
+    h.author.reply({**FIX, "changes": FIX["changes"][:1]})
+    for _ in ("fix", "verify", "publish"):
+        run = step(h.deps, run)
+    h.reviewer.reply({**APPROVE, "verdict": "REQUEST_CHANGES", "findings": [{**REVIEW_984["findings"][0], "supersedes": "R1-F1", "new_evidence": ""}],
+                      "resolved_prior": [{"id": "R1-F1", "resolution": "verified", "note": "ok"}]})
+    h.git.working_changed = [LOGGER]
+    h.author.reply({**FIX, "changes": [{**FIX["changes"][0], "finding_id": "R3-F1"}]})
+    for _ in ("rereview", "assess", "fix", "verify"):
+        run = step(h.deps, run)
+
+    run, reply, summary = published(h, run, "R3-F1")
+
+    commit = run.extra["fix_commit_pass_3"][:9]
+    assert reply.startswith(f"Alignment decision: fix. Fixed in {commit}.\n\nRe-raised after decision v2 without new evidence; the decision stands (fix).")
+    assert f"| R3-F1 | alignment decision: fix | {commit} |" in summary
+
+
+def test_a_keep_decided_by_arbitration_is_published_as_that_decision(settings, tmp_path):
+    h, run = arbitrated(settings, tmp_path, "B", "A")
+
+    run, reply, summary = published(h, run)
+
+    assert reply.startswith("Alignment decision: keep.\n\nBoth arbiters agree.") and "Still no" not in reply
+    assert "Kept as is on an alignment decision: R1-F1." in summary and "| R1-F1 | alignment decision: keep |  |" in summary
+
+
+def test_a_split_that_leaves_an_exception_is_published_with_the_split(settings, tmp_path):
+    h, run = arbitrated(settings, tmp_path, "A", "A")
+
+    run, reply, summary = published(h, run)
+
+    assert reply.startswith("Alignment decision: exception.\n\nSplit verdicts on an ISSUE: fix and keep.")
+    assert "Left as an exception on an alignment decision: R1-F1." in summary and "| R1-F1 | alignment decision: exception |  |" in summary
+
+
 def test_a_decided_dispute_re_raised_without_new_evidence_makes_no_agent_call(settings, tmp_path):
     h, run = to_dispute(settings, tmp_path)
     h.reviewer.reply(NOTE)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from review_loop.engine.discussion import Role, make_marker
 from review_loop.engine.findings import FindingState
-from review_loop.engine.reply_render import FIXING, render_inbox_mirror, render_reply, render_summary
+from review_loop.engine.reply_render import DECISION_SUMMARY, FIXING, render_inbox_mirror, render_reply, render_summary
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
 from review_loop.repositories import outbox as outbox_repo
@@ -13,7 +13,8 @@ from review_loop.services.phase_support import Deps, check_pull_before_effect, i
 from review_loop.services.publication import ControlLanded, Publisher
 from review_loop.types.run import PauseReason, Run, RunState
 
-DECISIONS = {FindingState.ACCEPTED: "decide_fix", FindingState.REJECTION_ACCEPTED: "decide_keep"}
+DECISION_KINDS = {FindingState.ACCEPTED: "fix", FindingState.REJECTION_ACCEPTED: "keep", FindingState.DEFERRED_BY_DECISION: "exception"}
+DECIDERS = {"human": "developer", "coordinator": "alignment"}
 
 
 def phase_publish(deps: Deps, run: Run) -> Run:
@@ -52,7 +53,7 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
         if note is None:
             continue
         # A decision can follow the author's reply in the same pass, after that reply was posted, so it has its own marker.
-        kind = "decision" if note["disposition"] in DECISIONS.values() else "reply"
+        kind = "decision" if note["disposition"] in DECISION_SUMMARY else "reply"
         marker = make_marker(Role.AUTHOR, run.id, run.pass_no, kind, finding.id)
         commit = _fix_commit(deps, run, finding.id) if note["disposition"] in FIXING else ""
         rows.append({"id": finding.id, "disposition": note["disposition"], "commit": commit[:9]})
@@ -71,7 +72,7 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
 
 
 def _reply_note(deps: Deps, run: Run, finding_id: str) -> dict | None:
-    """The latest word on the finding this pass: the author's reply, or a decision a person recorded with `review-loop align`."""
+    """The latest word on the finding this pass: the author's reply, or a decision that settled it after that reply."""
     # An author disposition that arrived after a decision is recorded as ignored, and the decision stands.
     events = [e for e in findings_repo.list_events(deps.conn, run.id, finding_id) if e["note"].get("pass") == run.pass_no
               and ((e["actor"] == "author" and e["note"].get("reply") is not None and not e["note"].get("ignored")) or _decided(e))]
@@ -80,12 +81,20 @@ def _reply_note(deps: Deps, run: Run, finding_id: str) -> dict | None:
     latest = events[-1]
     if latest["actor"] == "author":
         return latest["note"]
-    # The decision file's first line is the verdict, which the disposition already names.
-    return {"disposition": DECISIONS[latest["to_state"]], "reply": latest["note"].get("note", "").partition("\n")[2]}
+    return {"disposition": f"{DECIDERS[latest['actor']]}_{DECISION_KINDS[latest['to_state']]}", "reply": _decision_reason(latest)}
 
 
 def _decided(event: dict) -> bool:
-    return event["actor"] == "human" and event["from_state"] != event["to_state"] and event["to_state"] in DECISIONS
+    return event["actor"] in DECIDERS and event["from_state"] != event["to_state"] and event["to_state"] in DECISION_KINDS
+
+
+def _decision_reason(event: dict) -> str:
+    """The reason without the verdict the disposition already names: a decision file's first line, or an alignment note's "fix: "."""
+    note = event["note"].get("note", "")
+    if event["actor"] == "human":
+        return note.partition("\n")[2]
+    reason = note.removeprefix(f"{DECISION_KINDS[event['to_state']]}: ").strip()
+    return f"{reason[:1].upper()}{reason[1:].removesuffix('.')}." if reason else ""
 
 
 def _fix_commit(deps: Deps, run: Run, finding_id: str) -> str:

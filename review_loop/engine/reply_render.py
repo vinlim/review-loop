@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from review_loop.types.findings import Finding
 
-# decide_fix and decide_keep are a person's decision recorded with `review-loop align`, not the author's disposition.
+# A decision settles a finding in place of the author's disposition: a developer's, recorded with `review-loop align`, or the
+# alignment phase's, from arbitration, the severity rule, or an earlier decision standing for a re-raised finding.
+DECISION_SUMMARY = {"developer_fix": "Fixed on a developer decision", "developer_keep": "Kept as is on a developer decision",
+                    "alignment_fix": "Fixed on an alignment decision", "alignment_keep": "Kept as is on an alignment decision",
+                    "alignment_exception": "Left as an exception on an alignment decision"}
 DISPOSITION_LEAD = {"accept": "Accepted.", "reject": "Rejected.", "needs_alignment": "Needs alignment.", "answer": "Answer.",
-                    "unfixed": "Accepted, then not changed.", "decide_fix": "Developer decision: fix.", "decide_keep": "Developer decision: keep."}
-DISPOSITION_ROW = {"decide_fix": "developer decision: fix", "decide_keep": "developer decision: keep"}
-FIXING = frozenset({"accept", "decide_fix"})
+                    "unfixed": "Accepted, then not changed.", "developer_fix": "Developer decision: fix.",
+                    "developer_keep": "Developer decision: keep.", "alignment_fix": "Alignment decision: fix.",
+                    "alignment_keep": "Alignment decision: keep.", "alignment_exception": "Alignment decision: exception."}
+# A fix decided after the pass verified its changes is made in a later pass.
+NOT_MADE = {"developer_fix": "Fix decided by a developer, not made in this pass",
+            "alignment_fix": "Fix decided in alignment, not made in this pass"}
+FIXING = frozenset({"accept", "developer_fix", "alignment_fix"})
 
 
 def render_reply(finding: Finding, note: dict, fix_commit: str, verification: str, marker: str) -> str:
@@ -16,7 +24,7 @@ def render_reply(finding: Finding, note: dict, fix_commit: str, verification: st
     lead = DISPOSITION_LEAD.get(disposition, "")
     if disposition in FIXING and fix_commit:
         lead = f"{lead} Fixed in {fix_commit[:9]}."
-    elif disposition == "decide_fix":
+    elif disposition in NOT_MADE:
         lead = f"{lead} Not fixed in this pass."
     lines = [lead, "", note.get("reply", "").strip()]
     if note.get("evidence"):
@@ -31,7 +39,7 @@ def render_summary(run_pr: int, pass_no: int, head_sha: str, summary: str, rows:
                    drift: list[str], inbox_count: int, threadless: list[str], marker: str) -> str:
     lines = [f"## Review response, pass {pass_no} (head {head_sha[:9]})", "", summary.strip() or _decision_summary(rows), "",
              "| Finding | Disposition | Commit |", "|---|---|---|"]
-    lines += [f"| {row['id']} | {DISPOSITION_ROW.get(row['disposition'], row['disposition'])} | {row['commit']} |" for row in rows]
+    lines += [f"| {row['id']} | {_row_label(row['disposition'])} | {row['commit']} |" for row in rows]
     lines += ["", f"Verification: {verification or 'no checks ran this pass'}"]
     if drift:
         lines.append(f"Files touched outside the accepted findings: {', '.join(drift)}")
@@ -43,18 +51,22 @@ def render_summary(run_pr: int, pass_no: int, head_sha: str, summary: str, rows:
     return "\n".join(lines) + "\n"
 
 
+def _row_label(disposition: str) -> str:
+    """A decision reads as its lead ("alignment decision: fix"); the author's dispositions as themselves."""
+    return DISPOSITION_LEAD[disposition].removesuffix(".").lower() if disposition in DECISION_SUMMARY else disposition
+
+
 def _decision_summary(rows: list[dict]) -> str:
-    """A pass that only acted on a person's decisions has no assessment summary of its own."""
-    fixed = [row["id"] for row in rows if row["disposition"] == "decide_fix" and row["commit"]]
-    pending = [row["id"] for row in rows if row["disposition"] == "decide_fix" and not row["commit"]]
-    kept = [row["id"] for row in rows if row["disposition"] == "decide_keep"]
+    """A pass with no assessment of its own still says what the decisions in it settled, and which decided fix it did not make."""
     parts = []
-    if fixed:
-        parts.append(f"Fixed on a developer decision: {', '.join(fixed)}.")
-    if pending:
-        parts.append(f"Fix decided by a developer, not made in this pass: {', '.join(pending)}.")
-    if kept:
-        parts.append(f"Kept as is on a developer decision: {', '.join(kept)}.")
+    for disposition, phrase in DECISION_SUMMARY.items():
+        settled = [row for row in rows if row["disposition"] == disposition]
+        not_made = [row["id"] for row in settled if disposition in NOT_MADE and not row["commit"]]
+        made = [row["id"] for row in settled if row["id"] not in not_made]
+        if made:
+            parts.append(f"{phrase}: {', '.join(made)}.")
+        if not_made:
+            parts.append(f"{NOT_MADE[disposition]}: {', '.join(not_made)}.")
     return " ".join(parts)
 
 
