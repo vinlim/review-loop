@@ -51,7 +51,9 @@ def _publish_replies(deps: Deps, run: Run, publisher: Publisher, pull_ref, verif
         note = _reply_note(deps, run, finding.id)
         if note is None:
             continue
-        marker = make_marker(Role.AUTHOR, run.id, run.pass_no, "reply", finding.id)
+        # A decision can follow the author's reply in the same pass, after that reply was posted, so it has its own marker.
+        kind = "decision" if note["disposition"] in DECISIONS.values() else "reply"
+        marker = make_marker(Role.AUTHOR, run.id, run.pass_no, kind, finding.id)
         commit = _fix_commit(deps, run, finding.id) if note["disposition"] in FIXING else ""
         rows.append({"id": finding.id, "disposition": note["disposition"], "commit": commit[:9]})
         body = render_reply(finding, note, commit, verification if commit else "", marker)

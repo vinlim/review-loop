@@ -183,3 +183,36 @@ def test_a_fix_decision_recorded_while_the_author_assesses_outlasts_the_ignored_
     reply, summary = published_reply_and_summary(h, run, posted)
     assert reply.startswith(f"Developer decision: fix. Fixed in {commit}.") and "Needs alignment." not in reply
     assert f"| R1-F2 | developer decision: fix | {commit} |" in summary
+
+
+def test_a_decision_recorded_after_the_finding_replies_landed_reaches_the_thread_once(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(ONE_FOR_ALIGNMENT)
+    run = step(h.deps, run)
+    h.author.reply({**FIX, "changes": FIX["changes"][:1]})
+    run = step(h.deps, step(h.deps, run))
+
+    def fail_the_summary_once(kind):
+        if kind == "post_comment":
+            h.github.on_call = None
+            raise RuntimeError("502 from GitHub")
+
+    h.github.on_call = fail_the_summary_once
+    run = step(h.deps, run)
+    assert (run.state, run.pause_reason) == (RunState.PAUSED, PauseReason.GITHUB_ERROR)
+    decide_fix_for_r1_f2(settings, tmp_path, h, run.id)
+    run = run_control.resume(h.conn, runs_repo.get_run(h.conn, run.id), h.clock).value
+
+    run = step(h.deps, run)
+    run.state = RunState.PUBLISHING
+    runs_repo.save_run(h.conn, run)
+    run = step(h.deps, run)
+
+    thread = findings_repo.get_finding(h.conn, run.id, "R1-F2").comment_id
+    replies = [write[2] for write in h.github.writes if write[0] == "reply" and write[1] == thread]
+    assert len(replies) == 2 and replies[0].startswith("Needs alignment.")
+    assert replies[1].startswith("Developer decision: fix.") and "Bound the report by bytes." in replies[1]
+    assert run.state == RunState.REREVIEWING
