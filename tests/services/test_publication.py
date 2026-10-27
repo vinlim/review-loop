@@ -20,7 +20,7 @@ def make():
                                    budgets=Budgets(7, 2, 1), versions={}, created_at="t", updated_at="t"))
     github = FakeGitHub()
     github.add_pull(1004)
-    return conn, github, Publisher(conn, github, FakeClock())
+    return conn, github, Publisher(conn, github, FakeClock(), forbidden=["Co-Authored-By"], paths=[("/srv/loop", "<review-loop>"), ("/Users/vin", "~")])
 
 
 def test_the_intent_is_recorded_before_the_gateway_is_called_and_the_receipt_after():
@@ -67,3 +67,27 @@ def test_on_restart_an_uncertain_entry_is_reconciled_by_marker_before_any_resend
     assert entries[2]["state"] == "unsent"
     assert github.writes == []
     assert outcomes == [(1, "done"), (2, "unsent")]
+
+
+def test_a_posted_body_loses_provenance_lines_and_shows_host_paths_as_placeholders():
+    conn, github, publisher = make()
+    body = "Evidence: rg leak /srv/loop/runs/r/verify-1.log: one hit in /Users/vin/code/x.py\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n<!-- m2 -->\n"
+
+    publisher.post("run-1", "comment", {}, "<!-- m2 -->", body, lambda cleaned: github.post_comment(REF, cleaned))
+
+    sent = github.writes[-1][2]
+    assert sent == "Evidence: rg leak <review-loop>/runs/r/verify-1.log: one hit in ~/code/x.py\n\n<!-- m2 -->\n"
+
+
+def test_clean_gives_the_same_text_for_a_body_sent_outside_post():
+    _, _, publisher = make()
+
+    assert publisher.clean("see /srv/loop/worktrees/webapp-1004/app.py") == "see <review-loop>/worktrees/webapp-1004/app.py"
+
+
+def test_a_posted_sentence_ending_on_the_home_directory_shows_the_placeholder():
+    conn, github, publisher = make()
+
+    publisher.post("run-1", "comment", {}, "<!-- m3 -->", "The check ran as /Users/vin.\n<!-- m3 -->\n", lambda cleaned: github.post_comment(REF, cleaned))
+
+    assert github.writes[-1][2] == "The check ran as ~.\n<!-- m3 -->\n"

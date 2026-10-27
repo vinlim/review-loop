@@ -18,7 +18,10 @@ people to read. Write it as a careful engineer writes to a colleague.
   middle-dot meta strings, no arrow after a link.
 - One idea per sentence. Second person for instructions. No exclamation marks, no emoji, British
   spelling.
-- A command and its result: the command, a colon, then what it showed.
+- A command and its result: the command, a colon, then what it showed. Name files by their path in
+  the checkout. Never write an absolute path on the host, a home directory, or a path into the
+  review-loop state or run directory: a reader of the PR cannot open it, and it names the machine
+  and the person it belongs to. Refer to a log the loop wrote by what it is: the pass 2 verification log.
 - No AI provenance anywhere, in a comment, a commit message or a branch name: no Co-Authored-By
   trailer naming an assistant, no "Generated with" footer, no robot emoji, no mention of being a
   model or an assistant.

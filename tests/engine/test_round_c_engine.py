@@ -51,6 +51,7 @@ def test_every_agent_prompt_carries_the_shared_rules_for_text_bound_for_the_pr()
         assert "{{posted_text}}" in text, name
     block = (ROOT / "review_loop" / "prompts" / "posted-text.md").read_text()
     assert "{{" not in block and "No em dashes" in block
+    assert "Never write an absolute path on the host" in block
 
 
 def test_assets_ship_inside_the_package():

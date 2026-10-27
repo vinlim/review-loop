@@ -61,7 +61,10 @@ push. To run the same PR for real, `stop` it and `start` again (the worktree is 
 `start` in the other mode is refused with `mode_conflict`. The three
 `publication` switches in the config (`post_reviews`, `post_author_responses`, `push_verified_fixes`)
 are honoured at the point of each effect. Every agent prompt includes `review_loop/prompts/posted-text.md`, the
-writing rules for text that reaches the PR; edit that file to change the house style.
+writing rules for text that reaches the PR; edit that file to change the house style. Whatever an agent
+writes, every comment, review and report the loop posts has the attribution trailers stripped and the
+state directory and home directory of the host shown as `<review-loop>` and `~`, and a check command is
+shown relative to the registered checkout.
 
 `start` and `resume` drive the run in the calling process and print one line per phase transition.
 With `--detach` they hand the run to `review-loop drive <run-id>` in its own session, print its pid

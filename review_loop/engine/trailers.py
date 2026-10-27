@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from review_loop.engine.redaction import redact_paths
+
 
 def forbidden_trailer_lines(message: str, forbidden: list[str]) -> list[str]:
     needles = [token.lower() for token in forbidden]
@@ -16,6 +18,7 @@ def strip_forbidden_trailers(message: str, forbidden: list[str]) -> str:
     return "\n".join(kept) + ("\n" if message.endswith("\n") else "")
 
 
-def clean_for_github(body: str, forbidden: list[str]) -> str:
-    """Anything bound for GitHub loses provenance lines the same way a commit message does."""
-    return strip_forbidden_trailers(body, forbidden)
+def clean_for_github(body: str, forbidden: list[str], paths: list[tuple[str, str]] = ()) -> str:
+    """Anything bound for GitHub loses provenance lines the same way a commit message does, and the host paths in
+    `paths` are shown as their placeholders."""
+    return redact_paths(strip_forbidden_trailers(body, forbidden), list(paths))

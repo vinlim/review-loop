@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 
 from review_loop.engine.findings import FindingState, is_open_required
+from review_loop.engine.redaction import shown_command
 from review_loop.types.findings import Finding
 from review_loop.types.run import Outcome, Run
 
@@ -37,7 +38,7 @@ DECISION_ACTS = (("needs_alignment", "alignment on"), ("accepted", "fix decided 
 
 def render_report(run: Run, findings: list[Finding], events: dict[str, list[dict]], decisions: list[dict],
                   verification: list[dict], inbox_items: list[dict], exhausted: bool, commits: list[dict] = (),
-                  finished_at: str = "") -> str:
+                  finished_at: str = "", checkout: str = "", home: str = "") -> str:
     outcome = run.outcome or Outcome.COMPLETE
     lines = [f"# {HEADLINE[outcome]}: PR #{run.pr_number} at {run.head_sha[:9]} after {_passes(run.pass_no)}", ""]
     if exhausted:
@@ -65,7 +66,8 @@ def render_report(run: Run, findings: list[Finding], events: dict[str, list[dict
     if decisions:
         lines += ["", "## Alignment decisions", ""] + [f"- v{d['version']} ({_source(d)}): {d['decision']}" for d in decisions]
     lines += ["", "## Verification", ""]
-    lines += [f"- pass {v['pass_no']} attempt {v['attempt_no']}: {v['status']} ({', '.join(' '.join(c) for c in v['commands'])})" for v in verification] or ["- no checks ran"]
+    lines += [f"- pass {v['pass_no']} attempt {v['attempt_no']}: {v['status']} ({', '.join(shown_command(c, checkout, home) for c in v['commands'])})"
+              for v in verification] or ["- no checks ran"]
     if inbox_items:
         lines += ["", f"## Adjacent findings filed: {len(inbox_items)}", ""] + [f"- #{item['id']} {item['title']}" for item in inbox_items]
     lines += ["", "## Next step", "", NEXT_STEP[outcome]]
