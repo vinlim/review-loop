@@ -83,3 +83,11 @@ def test_clean_gives_the_same_text_for_a_body_sent_outside_post():
     _, _, publisher = make()
 
     assert publisher.clean("see /srv/loop/worktrees/webapp-1004/app.py") == "see <review-loop>/worktrees/webapp-1004/app.py"
+
+
+def test_a_posted_sentence_ending_on_the_home_directory_shows_the_placeholder():
+    conn, github, publisher = make()
+
+    publisher.post("run-1", "comment", {}, "<!-- m3 -->", "The check ran as /Users/vin.\n<!-- m3 -->\n", lambda cleaned: github.post_comment(REF, cleaned))
+
+    assert github.writes[-1][2] == "The check ran as ~.\n<!-- m3 -->\n"

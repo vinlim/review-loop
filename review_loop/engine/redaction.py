@@ -17,11 +17,12 @@ def host_paths(state_dir: str | Path, home: str | Path) -> list[tuple[str, str]]
 
 def redact_paths(text: str, paths: list[tuple[str, str]]) -> str:
     """Each path is rewritten to what it is shown as, longest first so the state directory wins over the home directory
-    it sits in. A match ends at a path boundary: `/Users/vin` leaves `/Users/vinlim` alone."""
+    it sits in. A match ends at a path boundary: `/Users/vin` leaves `/Users/vinlim` and `/Users/vin.bak` alone, and a
+    full stop that ends a sentence ends the match."""
     for path, shown in sorted(paths, key=lambda pair: -len(pair[0])):
         path = path.rstrip("/")
         if path:
-            text = re.sub(re.escape(path) + r"(?![\w.-])", lambda _: shown, text)
+            text = re.sub(re.escape(path) + r"(?![\w-])(?!\.[\w-])", lambda _: shown, text)
     return text
 
 
