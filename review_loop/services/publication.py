@@ -22,18 +22,24 @@ class ControlLanded(Exception):
 
 
 class Publisher:
-    def __init__(self, conn: sqlite3.Connection, github: GitHubGateway, clock: Clock, forbidden: list[str] | None = None):
+    def __init__(self, conn: sqlite3.Connection, github: GitHubGateway, clock: Clock, forbidden: list[str] | None = None,
+                 paths: list[tuple[str, str]] | None = None):
         self.conn = conn
         self.github = github
         self.clock = clock
         self.forbidden = list(forbidden or [])
+        self.paths = list(paths or [])
+
+    def clean(self, text: str) -> str:
+        """What any text bound for GitHub loses: provenance lines, and the paths of the host that ran the loop."""
+        from review_loop.engine.trailers import clean_for_github
+
+        return clean_for_github(text, self.forbidden, self.paths)
 
     def post(self, run_id: str, kind: str, payload: dict[str, Any], marker: str, body: str,
              send: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
-        """A body-carrying effect: the body is cleaned of provenance lines right before it is sent."""
-        from review_loop.engine.trailers import clean_for_github
-
-        cleaned = clean_for_github(body, self.forbidden)
+        """A body-carrying effect: the body is cleaned right before it is sent."""
+        cleaned = self.clean(body)
         return self.perform(run_id, kind, payload, marker, lambda: send(cleaned))
 
     def perform(self, run_id: str, kind: str, payload: dict[str, Any], marker: str,

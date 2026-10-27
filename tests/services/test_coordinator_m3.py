@@ -481,3 +481,38 @@ def test_a_final_report_longer_than_a_github_comment_is_posted_cut_and_kept_whol
     assert str(tmp_path) not in final
     assert len(final.split("<!-- review-loop")[0]) <= 600
     assert "## Next step" in report_path.read_text()
+
+
+def test_a_review_and_its_inline_comments_show_the_state_directory_as_a_placeholder(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    state = str(settings.state_dir)
+    cited = f"rg -n leak {state}/runs/r/pass-1/verify-1.log: one hit"
+    review = json.loads(json.dumps(REVIEW_984))
+    review["findings"][0]["evidence"] = cited
+    review["verification"] = [cited]
+    run = step(h.deps, h.run)
+    h.reviewer.reply(review)
+
+    step(h.deps, run)
+
+    body = [write for write in h.github.writes if write[0] == "post_review"][-1][2]
+    inline = [comment["body"] for comment in h.github.comments.values() if comment.get("kind") == "inline"]
+    assert "<review-loop>/runs/r/pass-1/verify-1.log" in body and state not in body
+    assert inline and any("<review-loop>/runs/r/pass-1/verify-1.log" in text for text in inline) and all(state not in text for text in inline)
+
+
+def test_the_final_report_shows_a_check_command_relative_to_the_checkout(settings, tmp_path):
+    repo_config = settings.repositories["webapp"]
+    check = [f"{repo_config.local_path}/.venv/bin/python", "-m", "pytest", "-q"]
+    checks = dataclasses.replace(repo_config.verification, required=[check])
+    settings = dataclasses.replace(settings, repositories={"webapp": dataclasses.replace(repo_config, verification=checks)})
+    h = harness(settings, tmp_path)
+    h.process.script(check, stdout="Tests: 42 passed")
+
+    run = run_to_completion(h)
+
+    assert run.state == RunState.COMPLETE
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    posted = [write[2] for write in h.github.writes if write[0] == "post_comment"]
+    assert "passed (.venv/bin/python -m pytest -q)" in report and str(repo_config.local_path) not in report
+    assert any("passed (.venv/bin/python -m pytest -q)" in text for text in posted) and all(str(repo_config.local_path) not in text for text in posted)

@@ -370,7 +370,7 @@ def _publish_review(deps: Deps, run: Run, review: dict, ids: list[str], diff_tex
     if outbox_repo.has_done(deps.conn, run.id, marker):
         return inline_ids
     body = render_review_body(review, list(zip(ids, review["findings"])), marker, inline_ids=inline_ids)
-    comments = [{k: v for k, v in entry.items() if k != "id"} for entry in inline]
+    comments = [{"path": entry["path"], "line": entry["line"], "body": posting.clean(entry["body"])} for entry in inline]
     receipt = posting.post(run.id, "review", {"pass": run.pass_no}, marker, body,
                            lambda cleaned: deps.github.post_review(pull_ref, cleaned, run.head_sha, comments))
     at = now(deps)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from review_loop.engine.discussion import Role, make_marker
 from review_loop.engine.report import fit_for_comment, render_report
 from review_loop.repositories import decisions as decisions_repo
@@ -35,7 +37,8 @@ def complete_run(deps: Deps, run: Run, outcome: Outcome, exhausted: bool) -> Run
     inbox_items = [item for item in inbox_repo.list_items(deps.conn, repo=run.repo) if item["source_pr"] == run.pr_number]
     report = render_report(run, findings, events, decisions_repo.list_decisions(deps.conn, run.id),
                            verification_repo.list_results(deps.conn, run.id), inbox_items, exhausted,
-                           commits=_loop_commits(deps, run, events), finished_at=now(deps))
+                           commits=_loop_commits(deps, run, events), finished_at=now(deps),
+                           checkout=str(deps.settings.repositories[run.repo].local_path), home=str(Path.home()))
     report_path = deps.runs_dir / run.id / "report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report)

@@ -393,9 +393,11 @@ def project_env(deps: Deps, repo_config: RepositoryConfig, run: Run) -> dict[str
 
 
 def publisher(deps: Deps, run: Run):
+    from review_loop.engine.redaction import host_paths
     from review_loop.services.publication import Publisher
 
-    return Publisher(deps.conn, deps.github, deps.clock, forbidden=deps.settings.repositories[run.repo].publication.forbid_commit_trailers)
+    return Publisher(deps.conn, deps.github, deps.clock, forbidden=deps.settings.repositories[run.repo].publication.forbid_commit_trailers,
+                     paths=host_paths(deps.settings.state_dir, Path.home()))
 
 
 def trusted_logins(deps: Deps, run: Run) -> set[str]:

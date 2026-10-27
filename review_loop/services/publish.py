@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from review_loop.engine.discussion import Role, make_marker
 from review_loop.engine.findings import FindingState
+from review_loop.engine.redaction import shown_command
 from review_loop.engine.reply_render import DECISION_SUMMARY, FIXING, render_inbox_mirror, render_reply, render_summary
 from review_loop.repositories import findings as findings_repo
 from review_loop.repositories import inbox as inbox_repo
@@ -109,7 +110,8 @@ def _verification_text(deps: Deps, run: Run) -> str:
     if not results:
         return ""
     latest = results[-1]
-    return f"{latest['status']} ({', '.join(' '.join(c) for c in latest['commands'])})"
+    checkout = str(repo(deps, run).local_path)
+    return f"{latest['status']} ({', '.join(shown_command(c, checkout) for c in latest['commands'])})"
 
 
 def _inbox_items(deps: Deps, run: Run) -> list[dict]:

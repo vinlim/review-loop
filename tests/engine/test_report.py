@@ -172,6 +172,15 @@ def test_a_report_too_long_for_a_github_comment_is_cut_at_a_line_with_a_pointer_
     assert fit_for_comment("short", limit=2000, full_path="x") == "short"
 
 
+def test_a_check_command_under_the_checkout_is_shown_relative_to_it():
+    checks = [["/Users/vin/Projects/webapp/.venv/bin/python", "-m", "pytest", "-q"]]
+    verification = [{"pass_no": 1, "attempt_no": 1, "status": "passed", "commands": checks}]
+
+    text = render_report(a_run(pass_no=1), [], {}, [], verification, [], exhausted=False, checkout="/Users/vin/Projects/webapp", home="/Users/vin")
+
+    assert "- pass 1 attempt 1: passed (.venv/bin/python -m pytest -q)" in text and "/Users/vin" not in text
+
+
 def test_a_pass_with_alignment_names_the_decisions_it_took():
     finding = a_finding("R1-F1", "deferred_by_decision")
     events = {"R1-F1": [event("reviewer", "", "open", **{"pass": 1}),
