@@ -278,3 +278,18 @@ def test_a_fix_the_reviewer_disputed_is_reported_as_an_attempt():
     line = next(line for line in text.splitlines() if line.startswith("- **R1-F1**"))
     assert "Commit `111111111` attempted a fix in pass 1, which the reviewer disputed in pass 2." in line
     assert "fixed" not in "\n".join(l for l in text.splitlines() if "R1-F1" in l)
+
+
+def test_a_finding_verified_after_a_dispute_names_the_commit_the_reviewer_read_and_credits_no_earlier_fix():
+    finding = a_finding("R1-F1", "verified")
+    events = {"R1-F1": fixed_then_verified(1, 1, C1, 2)[:3] + [
+        event("reviewer", "fixed_pending_verification", "open", resolution="disputed", note="The fix still leaks with two @.", **{"pass": 2}),
+        event("author", "open", "rejected_pending_review", disposition="reject", reply="Two @ in a password is out of scope.", **{"pass": 2}),
+        event("reviewer", "rejected_pending_review", "disputed", resolution="disputed", note="A copied URL carries two @.", head=C1, **{"pass": 3}),
+        event("reviewer", "disputed", "verified", resolution="verified", note="The second pass now redacts it.", head=C2, **{"pass": 4})]}
+
+    text = render_report(a_run(pass_no=4), [finding], events, [], [], [], exhausted=False)
+
+    assert "| R1-F1 | ISSUE | pass 1 | fix attempted in 111111111, verified in pass 4 at 222222222, after a dispute | A title |" in text
+    assert "fixed in" not in "\n".join(line for line in text.splitlines() if "R1-F1" in line)
+    assert "## Exceptions and open items" not in text
