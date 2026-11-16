@@ -63,6 +63,8 @@ def test_an_unknown_supersedes_id_is_ignored_and_reported_as_possible_duplicate_
     (FindingState.REJECTED_PENDING_REVIEW, "accept_rejection", FindingState.REJECTION_ACCEPTED),
     (FindingState.REJECTED_PENDING_REVIEW, "dispute", FindingState.DISPUTED),
     (FindingState.DISPUTED, "align", FindingState.NEEDS_ALIGNMENT),
+    (FindingState.DISPUTED, "verify", FindingState.VERIFIED),
+    (FindingState.DISPUTED, "accept_rejection", FindingState.REJECTION_ACCEPTED),
     (FindingState.NEEDS_ALIGNMENT, "decide_fix", FindingState.ACCEPTED),
     (FindingState.NEEDS_ALIGNMENT, "decide_keep", FindingState.REJECTION_ACCEPTED),
     (FindingState.NEEDS_ALIGNMENT, "except", FindingState.DEFERRED_BY_DECISION),

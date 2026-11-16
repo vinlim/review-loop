@@ -125,9 +125,13 @@ def _outcome(finding: Finding, events: list[dict], decisions: list[dict]) -> str
     in_pass = f" in pass {closing['note']['pass']}" if closing and closing["note"].get("pass") else ""
     decision = _decision_for(finding, decisions)
     commit, _ = _fix(events)
+    attempted = f"fix attempted in {commit[:9]}, " if commit else ""
+    if state == FindingState.VERIFIED and closing and closing.get("from_state") == FindingState.DISPUTED:
+        # No commit is recorded against a disputed finding, so the one on record is the attempt the dispute followed.
+        head = closing["note"].get("head", "")
+        return f"{attempted}verified{in_pass}" + (f" at {head[:9]}" if head else "") + ", after a dispute"
     if state == FindingState.VERIFIED:
         return (f"fixed in {commit[:9]}, " if commit else "") + f"verified{in_pass}"
-    attempted = f"fix attempted in {commit[:9]}, " if commit else ""
     if state == FindingState.REJECTION_ACCEPTED:
         if closing and closing["actor"] == "coordinator":
             return f"{attempted}kept by decision v{decision['version']}" if decision else f"{attempted}kept by a standing decision{in_pass}"

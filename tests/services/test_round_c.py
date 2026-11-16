@@ -12,7 +12,7 @@ from review_loop.types.agents import AgentError, AgentFailure
 from review_loop.types.run import PauseReason, RunState
 from tests.fakes.clock import FakeClock
 from tests.services.test_alignment import NOTE, disagree, to_dispute
-from tests.services.test_coordinator_m3 import FIX, REJECTIONS, harness, to_fixing, to_publishing, to_verifying, verified
+from tests.services.test_coordinator_m3 import FIX, NUMBERS, REJECTIONS, harness, to_fixing, to_publishing, to_verifying, verified
 from tests.services.test_coordinator_phases import APPROVE, ASSESS_984, REVIEW_984, URL, Harness
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -157,6 +157,113 @@ def test_verified_on_a_finding_that_was_never_fixed_is_ignored(settings, tmp_pat
     run = step(h.deps, run)
 
     assert h.findings()["R1-F1"].state == "rejected_pending_review"
+
+
+# --- a dispute the reviewer itself ends ------------------------------------------------------------------
+
+ONE_EACH = {"dispositions": [
+    {"finding_id": "R1-F1", "disposition": "reject", "reply": "No: the guard runs first.", "evidence": "X.php:3", "intended_fix": ""},
+    {"finding_id": "R1-F2", "disposition": "accept", "reply": "Yes: nothing bounds the bytes.", "evidence": "", "intended_fix": "bound bytes"}],
+    "adjacent_findings": [], "summary": "one rejected, one accepted"}
+ACCEPT_F2 = {"dispositions": [ONE_EACH["dispositions"][1]], "adjacent_findings": [], "summary": "accepted"}
+FIX_F2 = {**FIX, "changes": FIX["changes"][1:]}
+OTHER_CONCERN = {**REVIEW_984["findings"][1], "title": "Refuse a negative byte limit", "symbol": "limit", "supersedes": "", "new_evidence": ""}
+
+
+def fix_and_publish(h, run):
+    """The fix phase with the author's fix for R1-F2, the checks, then the push and the replies."""
+    h.git.working_changed = [NUMBERS]
+    h.author.reply(FIX_F2)
+    return step(h.deps, step(h.deps, step(h.deps, run)))
+
+
+def test_verified_on_a_disputed_finding_closes_it_once_a_later_commit_is_under_review(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(ONE_EACH)
+    run = fix_and_publish(h, step(h.deps, run))
+    h.reviewer.reply({**APPROVE, "verdict": "REQUEST_CHANGES", "resolved_prior": [
+        {"id": "R1-F1", "resolution": "disputed", "note": "a second @ in the password still leaks"},
+        {"id": "R1-F2", "resolution": "disputed", "note": "the bound counts characters, not bytes"}]})
+    run = step(h.deps, run)
+    assert run.state == RunState.ASSESSING and h.findings()["R1-F1"].state == "disputed"
+    h.author.reply(ACCEPT_F2)
+    run = fix_and_publish(h, step(h.deps, run))
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+
+    run = step(h.deps, run)
+
+    assert h.findings()["R1-F1"].state == "verified"
+    assert run.state == RunState.COMPLETE and run.outcome.value == "complete" and run.pass_no == 3
+    report = (tmp_path / "runs" / run.id / "report.md").read_text()
+    assert "| R1-F1 | ISSUE | pass 1 | verified in pass 3 at 0000002cc, after a dispute |" in report
+    assert "## Exceptions and open items" not in report
+
+
+def to_a_dispute_then_a_rereview_of_the_same_commit(settings, tmp_path):
+    """Both findings rejected; pass 2 disputes R1-F1 and raises another concern, which the author rejects with no commit."""
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(REJECTIONS)
+    run = step(h.deps, step(h.deps, run))
+    h.reviewer.reply({**REVIEW_984, "findings": [OTHER_CONCERN], "resolved_prior": [
+        {"id": "R1-F1", "resolution": "disputed", "note": "a second @ in the password still leaks"},
+        {"id": "R1-F2", "resolution": "rejection_accepted", "note": "fair"}]})
+    run = step(h.deps, run)
+    assert run.state == RunState.ASSESSING and h.findings()["R1-F1"].state == "disputed"
+    h.author.reply({"dispositions": [{"finding_id": "R2-F1", "disposition": "reject", "reply": "No: the limit is a constant.", "evidence": "e", "intended_fix": ""}],
+                    "adjacent_findings": [], "summary": "rejected"})
+    run = step(h.deps, step(h.deps, run))
+    assert run.state == RunState.REREVIEWING and h.git.commits == []
+    return h, run
+
+
+def test_verified_on_a_disputed_finding_is_ignored_while_the_commit_it_was_disputed_on_is_still_the_head(settings, tmp_path):
+    h, run = to_a_dispute_then_a_rereview_of_the_same_commit(settings, tmp_path)
+    h.reviewer.reply({**APPROVE, "resolved_prior": [{"id": "R1-F1", "resolution": "verified", "note": "reads fine now"},
+                                                     {"id": "R2-F1", "resolution": "rejection_accepted", "note": "fair"}]})
+
+    run = step(h.deps, run)
+
+    assert h.findings()["R1-F1"].state == "disputed"
+    ignored = findings_repo.list_events(h.conn, run.id, "R1-F1")[-1]
+    assert ignored["note"]["resolution"] == "verified" and ignored["note"]["ignored"]
+
+
+def test_verified_on_a_dispute_with_no_commit_on_record_is_ignored(settings, tmp_path):
+    h = harness(settings, tmp_path)
+    run = step(h.deps, h.run)
+    h.reviewer.reply(REVIEW_984)
+    run = step(h.deps, run)
+    h.author.reply(ONE_EACH)
+    run = fix_and_publish(h, step(h.deps, run))
+    h.reviewer.reply({**APPROVE, "verdict": "REQUEST_CHANGES", "resolved_prior": [
+        {"id": "R1-F1", "resolution": "disputed", "note": "a second @ in the password still leaks"},
+        {"id": "R1-F2", "resolution": "disputed", "note": "the bound counts characters, not bytes"}]})
+    run = step(h.deps, run)
+    h.conn.execute("update finding_events set note_json = json_remove(note_json, '$.head') where finding_id = 'R1-F1' and to_state = 'disputed'")
+    h.author.reply(ACCEPT_F2)
+    run = fix_and_publish(h, step(h.deps, run))
+    h.reviewer.reply(verified("R1-F1", "R1-F2"))
+
+    run = step(h.deps, run)
+
+    assert h.findings()["R1-F1"].state == "disputed" and h.findings()["R1-F2"].state == "verified"
+
+
+def test_the_reviewer_can_accept_a_rejection_it_disputed_earlier(settings, tmp_path):
+    h, run = to_a_dispute_then_a_rereview_of_the_same_commit(settings, tmp_path)
+    h.reviewer.reply({**APPROVE, "resolved_prior": [{"id": "R1-F1", "resolution": "rejection_accepted", "note": "the token is never user input"},
+                                                     {"id": "R2-F1", "resolution": "rejection_accepted", "note": "fair"}]})
+    h.git.working_changed = []
+
+    run = step(h.deps, run)
+
+    assert h.findings()["R1-F1"].state == "rejection_accepted" and run.state == RunState.VERIFYING
 
 
 # --- #9: silence never closes a rejected BLOCKER -----------------------------------------------------------

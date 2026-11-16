@@ -50,6 +50,8 @@ _TRANSITIONS: dict[tuple[FindingState, str], FindingState] = {
     (FindingState.REJECTED_PENDING_REVIEW, "dispute"): FindingState.DISPUTED,
     (FindingState.REJECTED_PENDING_REVIEW, "withdraw"): FindingState.WITHDRAWN,
     (FindingState.DISPUTED, "align"): FindingState.NEEDS_ALIGNMENT,
+    (FindingState.DISPUTED, "verify"): FindingState.VERIFIED,
+    (FindingState.DISPUTED, "accept_rejection"): FindingState.REJECTION_ACCEPTED,
     (FindingState.DISPUTED, "withdraw"): FindingState.WITHDRAWN,
     (FindingState.NEEDS_ALIGNMENT, "decide_fix"): FindingState.ACCEPTED,
     (FindingState.NEEDS_ALIGNMENT, "decide_keep"): FindingState.REJECTION_ACCEPTED,

@@ -400,6 +400,11 @@ open
   -> withdrawn_by_reviewer
 ```
 
+The reviewer can end its own dispute before alignment: with `rejection_accepted` at any time, and
+with `verified` once the commit under review differs from the one it disputed on. No fix
+phase is handed a disputed finding, so a fix for one arrives under another finding's name, and the
+reviewer's reading of the later commit is the only record of it.
+
 A finding record holds: id, repository and PR, severity and state, concern and protected behaviour,
 file, symbol and location history, evidence and failure scenario, original and latest reviewed
 commits, author and reviewer responses, fix commits and verification, GitHub thread and comment ids,

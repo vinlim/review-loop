@@ -341,8 +341,11 @@ def _apply_resolved_prior(deps: Deps, run: Run, review: dict, prior: list[Findin
         resolution, note = entry["resolution"], entry.get("note", "")
         if resolution == "disputed" and not note.strip() and finding.state == FindingState.REJECTED_PENDING_REVIEW:
             resolution, note = "rejection_accepted", "a dispute without new evidence counts as accepting the rejection"
-        apply_events(deps, run, finding, RESOLUTION_EVENTS.get(resolution, ()), "reviewer",
-                     {"resolution": resolution, "note": note, "pass": run.pass_no}, at)
+        events = RESOLUTION_EVENTS.get(resolution, ())
+        if resolution == "verified" and finding.state == FindingState.DISPUTED and not _moved_since_dispute(deps, run, finding):
+            events = ()
+        apply_events(deps, run, finding, events, "reviewer",
+                     {"resolution": resolution, "note": note, "pass": run.pass_no, "head": run.head_sha}, at)
     if run.pass_no == 1:
         return
     for finding in prior:
@@ -351,6 +354,16 @@ def _apply_resolved_prior(deps: Deps, run: Run, review: dict, prior: list[Findin
         current = findings_repo.get_finding(deps.conn, run.id, finding.id)
         apply_events(deps, run, current, OMISSION_EVENTS[FindingState(current.state)], "reviewer",
                      {"resolution": "by omission", "note": "by omission", "pass": run.pass_no}, at)
+
+
+def _moved_since_dispute(deps: Deps, run: Run, finding: Finding) -> bool:
+    """Whether the commit under review differs from the one the finding was disputed on. `verified` applies only to a
+    fixed finding, and a disputed one can only have been fixed by a later commit: no fix phase is handed a disputed
+    finding, so no commit is ever recorded against it. A dispute with no commit on record counts as not moved."""
+    disputed = next((e for e in reversed(findings_repo.list_events(deps.conn, run.id, finding.id))
+                     if e["to_state"] == FindingState.DISPUTED and e["from_state"] != FindingState.DISPUTED), None)
+    disputed_on = disputed["note"].get("head", "") if disputed else ""
+    return bool(disputed_on) and disputed_on != run.head_sha
 
 
 def _publish_review(deps: Deps, run: Run, review: dict, ids: list[str], diff_text: str) -> set[str]:
