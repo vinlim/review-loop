@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from review_loop.adapters.agents.common import classify_failure, extract_json_object, validate_against, with_schema_instructions
+from review_loop.adapters.agents.common import classify_failure, extract_json_object, timeout_error, validate_against, with_schema_instructions
 from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.protocols import ProcessRunner
 from review_loop.types.result import Err, Ok, Result
@@ -34,7 +34,7 @@ class OpencodeAdapter:
                                      stdout_path=str(events_path))
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:
-            return Err(AgentError(AgentFailure.TIMEOUT, f"opencode exceeded {request.timeout_seconds}s"))
+            return Err(timeout_error("opencode", request.timeout_seconds, completed))
         events = _events(completed.stdout)
         errors = "\n".join(json.dumps(event.get("error", event)) for event in events if event.get("type") == "error")
         if completed.exit_code != 0 or errors:

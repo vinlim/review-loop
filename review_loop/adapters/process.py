@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 
 from review_loop.types.protocols import CompletedRun
@@ -24,22 +25,25 @@ class SubprocessRunner:
             if sink:
                 sink.close()
         timed_out = False
+        warning = ""
         try:
             stdout, stderr = process.communicate(stdin, timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
-            survivors = _terminate_group(process)
+            warning = _survivor_warning(process.pid, _terminate_group(process))
             stdout, stderr = _drain(process)
             timed_out = True
-            if survivors:
-                stderr = (stderr or "") + f"\nprocess group {process.pid} refused KILL; still running: {survivors}"
         except KeyboardInterrupt:
-            _terminate_group(process)  # the agent lives in its own session, so the terminal's interrupt never reached it
+            # the agent lives in its own session, so the terminal's interrupt never reached it
+            warning = _survivor_warning(process.pid, _terminate_group(process))
             _drain(process)
+            if warning:
+                print(warning, file=sys.stderr)
             raise
         if stdout_path:
             stdout = open(stdout_path).read()
         code = process.returncode if process.returncode is not None else -1
-        return CompletedRun(list(argv), code, stdout or "", stderr or "", timed_out=timed_out)
+        stderr = "\n".join(part for part in (stderr or "", warning) if part)
+        return CompletedRun(list(argv), code, stdout or "", stderr, timed_out=timed_out, cleanup_warning=warning)
 
 
 def spawn_detached(argv: list[str], cwd: str, env: dict[str, str], log_path) -> int:
@@ -51,18 +55,29 @@ def spawn_detached(argv: list[str], cwd: str, env: dict[str, str], log_path) -> 
     return process.pid
 
 
-def _terminate_group(process: subprocess.Popen, grace_seconds: float = 2.0) -> str:
+def _terminate_group(process: subprocess.Popen, grace_seconds: float = 2.0) -> set[int] | None:
     """TERM the whole group, wait briefly, then KILL the whole group: a grandchild that ignores TERM must not survive the leader.
-    Returns the members the KILL could not reach, empty when none are left."""
+    The leader stays unreaped until after the KILL, so its pid, which is the group id, cannot be recycled in between.
+    Returns the live members the KILL could not reach, or None when ps cannot say."""
     _signal_group(process, signal.SIGTERM)
     deadline = time.monotonic() + grace_seconds
-    while time.monotonic() < deadline and process.poll() is None:
+    while time.monotonic() < deadline and not _leader_exited(process):
         time.sleep(0.05)
     return _signal_group(process, signal.SIGKILL)
 
 
-def _signal_group(process: subprocess.Popen, signal_number: int) -> str:
-    """Returns the live members the signal could not reach, empty when it landed or the group is gone."""
+def _leader_exited(process: subprocess.Popen) -> bool:
+    """Whether the leader has exited, without reaping it."""
+    if process.returncode is not None:
+        return True
+    try:
+        return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    except ChildProcessError:
+        return True
+
+
+def _signal_group(process: subprocess.Popen, signal_number: int) -> set[int] | None:
+    """Returns the live members the signal could not reach: empty when it landed or the group is gone, None when ps cannot say."""
     try:
         os.killpg(process.pid, signal_number)
     except ProcessLookupError:
@@ -70,25 +85,34 @@ def _signal_group(process: subprocess.Popen, signal_number: int) -> str:
     except PermissionError:
         # EPERM means no member took the signal. On macOS that includes a group left with only zombies, which is how a
         # group looks right after TERM worked; only a live member we may not signal is a real survivor.
-        live = _live_members(process.pid)
-        return "unknown (ps failed)" if live is None else ", ".join(str(pid) for pid in sorted(live))
-    return ""
+        return _live_members(process.pid)
+    return set()
 
 
 def _live_members(pgid: int) -> set[int] | None:
-    """Pids in the group that are not zombies, or None when ps cannot say."""
     try:
         listing = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if listing.returncode != 0:
-        return None
+    return _live_in(listing.stdout, pgid) if listing.returncode == 0 else None
+
+
+def _live_in(listing: str, pgid: int) -> set[int]:
+    """Group members in `ps -o pid=,pgid=,stat=` output, leaving out zombies (Z, or X on Linux) and processes macOS flags E for exiting."""
     live = set()
-    for line in listing.stdout.splitlines():
+    for line in listing.splitlines():
         fields = line.split()
-        if len(fields) >= 3 and fields[1] == str(pgid) and not fields[2].startswith("Z"):
+        if len(fields) >= 3 and fields[1] == str(pgid) and fields[2][0] not in "ZX" and "E" not in fields[2]:
             live.add(int(fields[0]))
     return live
+
+
+def _survivor_warning(pgid: int, survivors: set[int] | None) -> str:
+    if survivors is None:
+        return f"process group {pgid} refused KILL and ps could not list what is left of it"
+    if survivors:
+        return f"process group {pgid} refused KILL; still running: {', '.join(str(pid) for pid in sorted(survivors))}"
+    return ""
 
 
 def _drain(process: subprocess.Popen, seconds: float = 5.0) -> tuple[str, str]:

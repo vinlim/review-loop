@@ -24,6 +24,11 @@ def classify_failure(text: str, default: AgentFailure = AgentFailure.PROCESS_FAI
     return default
 
 
+def timeout_error(agent: str, timeout_seconds: int, completed) -> AgentError:
+    detail = f"{agent} exceeded {timeout_seconds}s"
+    return AgentError(AgentFailure.TIMEOUT, f"{detail}; {completed.cleanup_warning}" if completed.cleanup_warning else detail)
+
+
 def validate_against(schema_path: str, data: object) -> Result[dict, AgentError]:
     schema = json.loads(Path(schema_path).read_text())
     if not isinstance(data, dict):

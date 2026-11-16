@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from review_loop.adapters.agents.common import classify_failure, parse_json_text, validate_against
+from review_loop.adapters.agents.common import classify_failure, parse_json_text, timeout_error, validate_against
 from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.protocols import ProcessRunner
 from review_loop.types.result import Err, Ok, Result
@@ -27,7 +27,7 @@ class AgyAdapter:
         result_path.write_text(completed.stdout)
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:
-            return Err(AgentError(AgentFailure.TIMEOUT, f"agy exceeded {request.timeout_seconds}s"))
+            return Err(timeout_error("agy", request.timeout_seconds, completed))
         envelope = _envelope(completed.stdout)
         if completed.exit_code == 0 and not envelope:
             return Err(AgentError(AgentFailure.MALFORMED_OUTPUT, "agy printed no JSON result"))
