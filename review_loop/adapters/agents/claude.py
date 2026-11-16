@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from review_loop.adapters.agents.common import classify_failure, parse_json_text, validate_against
+from review_loop.adapters.agents.common import classify_failure, parse_json_text, timeout_error, validate_against
 from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.protocols import ProcessRunner
 from review_loop.types.result import Err, Ok, Result
@@ -41,7 +41,7 @@ class ClaudeAdapter:
         result_path.write_text(completed.stdout)
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:
-            return Err(AgentError(AgentFailure.TIMEOUT, f"claude exceeded {request.timeout_seconds}s"))
+            return Err(timeout_error("claude", request.timeout_seconds, completed))
         if completed.exit_code != 0:
             kind = classify_failure(completed.stdout + "\n" + completed.stderr)
             return Err(AgentError(kind, f"claude exited {completed.exit_code}: {(completed.stderr or completed.stdout).strip()[-500:]}"))

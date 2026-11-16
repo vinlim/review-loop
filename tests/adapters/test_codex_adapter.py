@@ -5,6 +5,7 @@ import pytest
 
 from review_loop.adapters.agents.codex import CodexAdapter
 from review_loop.types.agents import AgentFailure, PhaseRequest
+from review_loop.types.protocols import CompletedRun
 from tests.fakes.process import FakeProcessRunner
 
 SCHEMAS = Path(__file__).resolve().parents[2] / "review_loop" / "schemas"
@@ -102,6 +103,16 @@ def test_a_timeout_yields_timeout(tmp_path):
     result = CodexAdapter(process).run(request(tmp_path))
 
     assert not result.ok and result.error.kind == AgentFailure.TIMEOUT
+
+
+def test_a_timeout_names_a_process_that_survived_the_kill(tmp_path):
+    process = FakeProcessRunner()
+    warning = "process group 7 refused KILL; still running: 8"
+    process.script_sequence(["codex", "exec"], [CompletedRun(["codex", "exec"], -1, "", warning, timed_out=True, cleanup_warning=warning)])
+
+    result = CodexAdapter(process).run(request(tmp_path))
+
+    assert result.error.kind == AgentFailure.TIMEOUT and "still running: 8" in result.error.detail
 
 
 def test_a_write_phase_uses_the_workspace_write_sandbox(tmp_path):

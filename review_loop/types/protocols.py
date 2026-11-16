@@ -19,6 +19,7 @@ class CompletedRun:
     stdout: str
     stderr: str
     timed_out: bool = False
+    cleanup_warning: str = ""  # set when timeout cleanup left a process it could not kill; also appended to stderr
 
 
 class ProcessRunner(Protocol):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from review_loop.adapters.agents.common import classify_failure, parse_json_text, validate_against
+from review_loop.adapters.agents.common import classify_failure, parse_json_text, timeout_error, validate_against
 from review_loop.types.agents import AgentError, AgentFailure, PhaseOutput, PhaseRequest
 from review_loop.types.protocols import ProcessRunner
 from review_loop.types.result import Err, Ok, Result
@@ -26,7 +26,7 @@ class CodexAdapter:
                                      stdout_path=str(events_path))
         (output_dir / "stderr.txt").write_text(completed.stderr)
         if completed.timed_out:
-            return Err(AgentError(AgentFailure.TIMEOUT, f"codex exceeded {request.timeout_seconds}s"))
+            return Err(timeout_error("codex", request.timeout_seconds, completed))
         if completed.exit_code != 0:
             kind = classify_failure(_error_text(completed.stdout) + "\n" + completed.stderr)
             return Err(AgentError(kind, f"codex exited {completed.exit_code}: {_last_lines(completed.stderr or completed.stdout)}"))
